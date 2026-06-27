@@ -34,66 +34,17 @@ from models.audit import (
 
 logger = creer_logger("ui")
 
-# ── Palette ───────────────────────────────────────────────────────────────────
+# ── Charte graphique (palette claire + helpers) ─────────────────────────────────
+# La palette et les fabriques de widgets vivent désormais dans views/theme.py.
+from views.theme import (
+    C, FONT, FONT_SMALL, FONT_BOLD, FONT_TITLE, FONT_LABEL, FONT_VALUE, FONT_MONO,
+    ACCENT_VIOLET, ACCENT_VIOLET_HOVER, ACCENT_GREEN, ACCENT_RED, NOIR,
+    lbl, sep, card, btn, btn_noir, btn_accent, section_title, champ_saisie,
+)
 
-C = {
-    "bg_app":       "#0f0f0f",
-    "bg_sidebar":   "#161616",
-    "bg_topbar":    "#141414",
-    "bg_card":      "#161616",
-    "bg_input":     "#0f0f0f",
-    "bg_active":    "#1d3a5c",
-    "bg_hover":     "#1e1e1e",
-    "bg_success":   "#1a3a1a",
-    "bg_danger":    "#3a1a1a",
-    "bg_badge":     "#1d2f1d",
-    "border":       "#222222",
-    "border_light": "#2a2a2a",
-    "txt_primary":  "#e2e8f0",
-    "txt_secondary":"#94a3b8",
-    "txt_muted":    "#475569",
-    "txt_active":   "#7ec8f7",
-    "txt_green":    "#4ade80",
-    "txt_red":      "#f87171",
-    "txt_blue":     "#3b9ade",
-    "txt_amber":    "#fbbf24",
-}
-FONT        = ("Segoe UI", 10)
-FONT_SMALL  = ("Segoe UI", 9)
-FONT_BOLD   = ("Segoe UI", 10, "bold")
-FONT_TITLE  = ("Segoe UI", 13, "bold")
-FONT_LABEL  = ("Segoe UI", 9)
-FONT_VALUE  = ("Segoe UI", 18, "bold")
-FONT_MONO   = ("Consolas", 9)
-
-
-# ── Helpers UI ────────────────────────────────────────────────────────────────
-
-def lbl(parent, text="", font=FONT, fg=None, bg=None, anchor="w", **kw):
-    return tk.Label(
-        parent, text=text, font=font,
-        fg=fg or C["txt_secondary"],
-        bg=bg or C["bg_app"],
-        anchor=anchor, **kw,
-    )
-
-def sep(parent, bg=None):
-    return tk.Frame(parent, height=1, bg=bg or C["border"])
-
-def card(parent, **kw):
-    return tk.Frame(parent, bg=C["bg_card"],
-                    highlightbackground=C["border"],
-                    highlightthickness=1, **kw)
-
-def btn(parent, text, command, color=C["bg_active"], fgcolor=C["txt_active"],
-        font=FONT, padx=12, pady=5):
-    b = tk.Button(
-        parent, text=text, command=command,
-        font=font, bg=color, fg=fgcolor,
-        activebackground=C["bg_hover"], activeforeground=C["txt_primary"],
-        relief="flat", bd=0, padx=padx, pady=pady, cursor="hand2",
-    )
-    return b
+# Alias rétro-compatibles : les pages pas encore redessinées les utilisent encore.
+_section_title = section_title
+_entry_dark = champ_saisie
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -123,6 +74,8 @@ class ApplicationIPQ(tk.Tk):
         self._boucle_courante: Optional[BoucleCalibration] = None
         self._vue_active    = None
         self._nav_btns      = {}
+        self._detect_scanning = False
+        self._spin_i        = 0
 
         # COM mesuré pendant les X séries uniquement (l'init n'est pas concernée).
         # Par défaut COM1. L'autre COM n'est pas lu pendant le mesurage.
@@ -135,6 +88,7 @@ class ApplicationIPQ(tk.Tk):
         self._ctrl_connexion = ConnexionController(self)
 
         # ── Layout racine ──────────────────────────────────────────────────
+        self._appliquer_styles_ttk()
         self._construire_layout()
         self._construire_sidebar()
         self._construire_topbar()
@@ -151,6 +105,48 @@ class ApplicationIPQ(tk.Tk):
             ThermoService(self.gp, est_occupe=lambda: self._acq_en_cours),
         )
         self._thermo.demarrer()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Styles ttk (palette claire partagée)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _appliquer_styles_ttk(self) -> None:
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        # Barre de progression verte (Init + mesurage)
+        style.configure("Green.Horizontal.TProgressbar",
+                        troughcolor="#E3E2DD", bordercolor="#E3E2DD",
+                        background=ACCENT_GREEN, lightcolor=ACCENT_GREEN,
+                        darkcolor=ACCENT_GREEN, thickness=10)
+        # Combobox claire (ports)
+        style.configure("TCombobox",
+                        fieldbackground=C["bg_input"], background=C["bg_card"],
+                        foreground=C["txt_primary"], arrowcolor=C["txt_secondary"],
+                        bordercolor=C["border_light"], lightcolor=C["border_light"],
+                        darkcolor=C["border_light"])
+        style.map("TCombobox",
+                  fieldbackground=[("readonly", C["bg_input"])],
+                  foreground=[("readonly", C["txt_primary"])],
+                  selectbackground=[("readonly", C["bg_input"])],
+                  selectforeground=[("readonly", C["txt_primary"])])
+        # Tableau de résultats clair
+        style.configure("Light.Treeview",
+                        background=C["bg_card"], foreground=C["txt_primary"],
+                        fieldbackground=C["bg_card"], rowheight=28, font=FONT_SMALL,
+                        bordercolor=C["border"])
+        style.configure("Light.Treeview.Heading",
+                        background="#EEEDE8", foreground=C["txt_secondary"],
+                        relief="flat", font=("Segoe UI", 9, "bold"))
+        style.map("Light.Treeview",
+                  background=[("selected", C["bg_active"])],
+                  foreground=[("selected", C["txt_active"])])
+        # Barres de défilement claires
+        style.configure("Vertical.TScrollbar",
+                        background=C["bg_hover"], troughcolor=C["bg_app"],
+                        arrowcolor=C["txt_secondary"], bordercolor=C["border"])
 
     # ══════════════════════════════════════════════════════════════════════════
     # Layout principal
@@ -171,12 +167,13 @@ class ApplicationIPQ(tk.Tk):
         self.frame_content = tk.Frame(self.frame_right, bg=C["bg_app"])
         self.frame_content.pack(side="top", fill="both", expand=True)
 
-        self.frame_statusbar = tk.Frame(self.frame_right, bg="#0a0a0a", height=28)
+        self.frame_statusbar = tk.Frame(self.frame_right, bg=C["bg_topbar"], height=28,
+                                        highlightbackground=C["border"], highlightthickness=1)
         self.frame_statusbar.pack(side="bottom", fill="x")
         self.frame_statusbar.pack_propagate(False)
         self.lbl_statut = tk.Label(
             self.frame_statusbar, text="Ready.",
-            font=FONT_SMALL, bg="#0a0a0a", fg=C["txt_muted"], anchor="w", padx=10,
+            font=FONT_SMALL, bg=C["bg_topbar"], fg=C["txt_muted"], anchor="w", padx=10,
         )
         self.lbl_statut.pack(fill="both", expand=True)
 
@@ -381,103 +378,77 @@ class ApplicationIPQ(tk.Tk):
 
         _section_title(inner, "Instrument connection")
 
-        # Identification opérateur
-        c0 = card(inner)
-        c0.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c0, "Operator identification  (required)", FONT_BOLD,
-            C["txt_primary"], C["bg_card"]).pack(anchor="w", padx=14, pady=(12, 4))
-        row_op = tk.Frame(c0, bg=C["bg_card"])
-        row_op.pack(fill="x", padx=14, pady=(0, 12))
-        lbl(row_op, "Full name / ID :", FONT, C["txt_secondary"],
-            C["bg_card"]).pack(side="left", padx=(0, 10))
-        _entry_dark(row_op, self.var_operateur, width=32).pack(side="left")
-
-        # Indice de notation
-        c1 = card(inner)
-        c1.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c1, "Record identifier", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(
-            anchor="w", padx=14, pady=(12, 2))
-        self.var_indice = tk.StringVar()
-        _entry_dark(c1, self.var_indice, width=30).pack(
-            anchor="w", padx=14, pady=(0, 12))
-
-        # Ports série
-        c2 = card(inner)
-        c2.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c2, "RS-232 serial ports", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
+        # ── Session : opérateur + indice de notation ──────────────────────
+        c_sess = card(inner)
+        c_sess.pack(fill="x", padx=20, pady=(0, 12))
+        lbl(c_sess, "SESSION", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(
             anchor="w", padx=14, pady=(12, 8))
+        row_sess = tk.Frame(c_sess, bg=C["bg_card"])
+        row_sess.pack(fill="x", padx=14, pady=(0, 12))
+
+        col_op = tk.Frame(row_sess, bg=C["bg_card"])
+        col_op.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        lbl(col_op, "Operator", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(anchor="w")
+        champ_saisie(col_op, self.var_operateur).pack(fill="x", pady=(3, 0))
+
+        self.var_indice = tk.StringVar()
+        col_id = tk.Frame(row_sess, bg=C["bg_card"])
+        col_id.pack(side="left", fill="x", expand=True)
+        lbl(col_id, "Notation index", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(anchor="w")
+        champ_saisie(col_id, self.var_indice).pack(fill="x", pady=(3, 0))
+
+        # GPIB conservé en arrière-plan (non affiché) — ne pas casser le contrôleur.
+        self.var_gpib = tk.StringVar(value="GPIB0::1::INSTR")
+
+        # ── Ports instruments ─────────────────────────────────────────────
+        c_ports = card(inner)
+        c_ports.pack(fill="x", padx=20, pady=(0, 12))
+        lbl(c_ports, "INSTRUMENT PORTS", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(
+            anchor="w", padx=14, pady=(12, 4))
+        lbl(c_ports,
+            "Assign each role to its serial port — ports may change when the card is reconnected.",
+            FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(anchor="w", padx=14, pady=(0, 8))
 
         self._port_vars   = {}
         self._port_labels = {}
+        for nom, label in [("com1", "COM1   ·   Multimeter 1"),
+                           ("com2", "COM2   ·   Multimeter 2"),
+                           ("thermo1", "Thermo1   ·   Thermohygrometer")]:
+            row = tk.Frame(c_ports, bg=C["bg_card"])
+            row.pack(fill="x", padx=14, pady=5)
+            lbl(row, label, FONT, C["txt_primary"], C["bg_card"]).pack(side="left")
 
-        for nom, label in [("com1", "COM 1 — Multimeter 1"),
-                            ("com2", "COM 2 — Multimeter 2"),
-                            ("thermo1", "Thermo 1 — Thermohygrometer")]:
-            row = tk.Frame(c2, bg=C["bg_card"])
-            row.pack(fill="x", padx=14, pady=4)
-            lbl(row, label, FONT, C["txt_secondary"], C["bg_card"]).pack(side="left", padx=(0, 10))
+            dot = tk.Label(row, text="●", font=("Segoe UI", 13),
+                           bg=C["bg_card"], fg=C["txt_muted"])
+            dot.pack(side="right", padx=(8, 0))
+            self._port_labels[nom] = dot
 
             var = tk.StringVar()
             self._port_vars[nom] = var
-            cb = ttk.Combobox(row, textvariable=var, width=10, state="readonly",
+            cb = ttk.Combobox(row, textvariable=var, width=12, state="readonly",
                               font=FONT_SMALL)
-            cb.pack(side="left", padx=(0, 8))
+            cb.pack(side="right", padx=(0, 8))
 
-            dot = tk.Label(row, text="●", font=("Segoe UI", 14),
-                           bg=C["bg_card"], fg=C["txt_muted"])
-            dot.pack(side="right", padx=8)
-            self._port_labels[nom] = dot
-
+            # Connexion du port laissée disponible (la gestion fine des COM est faite à part).
             btn(row, "Connect",
                 command=lambda n=nom: self._connecter_port(n),
-                color=C["bg_active"], fgcolor=C["txt_active"],
-                padx=10, pady=4).pack(side="right", padx=4)
+                padx=10, pady=3).pack(side="right", padx=(0, 8))
 
-        row_btns = tk.Frame(c2, bg=C["bg_card"])
-        row_btns.pack(fill="x", padx=14, pady=(6, 2))
-        btn(row_btns, "↺  Refresh ports",
-            command=self._rafraichir_ports,
-            color=C["bg_hover"], fgcolor=C["txt_secondary"],
-            padx=10, pady=5).pack(side="left")
-        btn(row_btns, "🔍  Auto-detect",
-            command=self._auto_detecter,
-            color=C["bg_active"], fgcolor=C["txt_active"],
-            padx=10, pady=5).pack(side="left", padx=(8, 0))
-        self.lbl_detect = lbl(c2, "", FONT_SMALL, C["txt_muted"], C["bg_card"])
-        self.lbl_detect.pack(anchor="w", padx=14, pady=(0, 12))
+        row_btns = tk.Frame(c_ports, bg=C["bg_card"])
+        row_btns.pack(fill="x", padx=14, pady=(8, 4))
+        btn_noir(row_btns, "↻   Refresh ports",
+                 command=self._rafraichir_ports, padx=12, pady=7).pack(side="left")
+        self._btn_detect = btn_noir(row_btns, "⌖   Auto-detect",
+                                    command=self._auto_detecter, padx=12, pady=7)
+        self._btn_detect.pack(side="left", padx=(8, 0))
+        self.lbl_detect = lbl(c_ports, "", FONT_SMALL, C["txt_muted"], C["bg_card"])
+        self.lbl_detect.pack(anchor="w", padx=14, pady=(6, 12))
 
-        # GPIB
-        c3 = card(inner)
-        c3.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c3, "Interface GPIB", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
-            anchor="w", padx=14, pady=(12, 8))
-
-        row_gpib = tk.Frame(c3, bg=C["bg_card"])
-        row_gpib.pack(fill="x", padx=14, pady=(0, 4))
-        lbl(row_gpib, "VISA address:", FONT, C["txt_secondary"], C["bg_card"]).pack(side="left", padx=(0, 8))
-        self.var_gpib = tk.StringVar(value="GPIB0::1::INSTR")
-        _entry_dark(row_gpib, self.var_gpib, width=22).pack(side="left", padx=(0, 8))
-        self.lbl_gpib_dot = tk.Label(row_gpib, text="●", font=("Segoe UI", 14),
-                                      bg=C["bg_card"], fg=C["txt_muted"])
-        self.lbl_gpib_dot.pack(side="right", padx=8)
-        btn(row_gpib, "Connect",
-            command=self._connecter_gpib,
-            color=C["bg_active"], fgcolor=C["txt_active"],
-            padx=10, pady=4).pack(side="right", padx=4)
-
-        btn(c3, "List VISA resources",
-            command=self._lister_visa,
-            color=C["bg_hover"], fgcolor=C["txt_secondary"],
-            padx=10, pady=5).pack(anchor="w", padx=14, pady=(4, 4))
-        self.lbl_visa_list = lbl(c3, "", FONT_SMALL, C["txt_muted"], C["bg_card"])
-        self.lbl_visa_list.pack(anchor="w", padx=14, pady=(0, 12))
-
-        # Bouton valider
-        btn_val = btn(inner, "✔  Confirm configuration",
-                      command=self._valider_connexion,
-                      color="#1a4a2a", fgcolor=C["txt_green"],
-                      padx=14, pady=8)
-        btn_val.pack(anchor="w", padx=20, pady=(4, 20))
+        # ── Valider la connexion (rouge → vert) ───────────────────────────
+        self.btn_validate = btn_accent(
+            inner, "Validate connection", command=self._valider_connexion,
+            color=ACCENT_RED, padx=26, pady=12)
+        self.btn_validate.pack(anchor="w", padx=20, pady=(4, 20))
 
         self._rafraichir_ports()
         return f
@@ -529,7 +500,7 @@ class ApplicationIPQ(tk.Tk):
         self.btn_valider_init = btn(
             val_inner, "✔  Approve initialization",
             command=self._valider_init,
-            color="#1a1a2a", fgcolor=C["txt_muted"],
+            color=C["bg_hover"], fgcolor=C["txt_muted"],
             padx=14, pady=8,
         )
         self.btn_valider_init.configure(state="disabled")
@@ -547,7 +518,8 @@ class ApplicationIPQ(tk.Tk):
         statut = lbl(h, "Standby", FONT_SMALL, C["txt_muted"], C["bg_card"])
         statut.pack(side="right")
         setattr(self, f"lbl_init{n}_statut", statut)
-        prog = ttk.Progressbar(c, length=100, maximum=30, mode="determinate")
+        prog = ttk.Progressbar(c, length=100, maximum=30, mode="determinate",
+                               style="Green.Horizontal.TProgressbar")
         prog.pack(fill="x", padx=14, pady=(0, 8))
         setattr(self, f"prog_init{n}", prog)
         mv = tk.Frame(c, bg=C["bg_card"])
@@ -564,26 +536,29 @@ class ApplicationIPQ(tk.Tk):
             tk.Label(sub, textvariable=var, font=("Segoe UI", 13, "bold"),
                      fg=C["txt_blue"], bg=C["bg_card"]).pack(anchor="w")
         pady_btn = (0, 4) if cible == "com1" else (0, 12)
-        btn(c, f"▶  Run COM{n} initialization",
-            command=lambda ci=cible: self._lancer_init(ci),
-            color=C["bg_active"], fgcolor=C["txt_active"],
-            padx=12, pady=6).pack(anchor="w", padx=14, pady=pady_btn)
+        btn_noir(c, f"▶   Run COM{n} initialization",
+                 command=lambda ci=cible: self._lancer_init(ci),
+                 padx=12, pady=6).pack(anchor="w", padx=14, pady=pady_btn)
         if cible == "com1":
-            btn(c, "⏩  Initialize COM1 then COM2 automatically",
-                command=self._lancer_init_sequentielle,
-                color="#1a2a1a", fgcolor=C["txt_muted"],
-                padx=12, pady=5).pack(anchor="w", padx=14, pady=(0, 12))
+            b_seq = btn(c, "⏩   Initialize COM1 then COM2 automatically",
+                        command=self._lancer_init_sequentielle,
+                        color=C["bg_card"], fgcolor=C["txt_secondary"],
+                        padx=12, pady=5)
+            b_seq.configure(highlightbackground=C["border_light"], highlightthickness=1)
+            b_seq.pack(anchor="w", padx=14, pady=(0, 12))
 
     def _maj_boutons_com(self) -> None:
-        """Style les boutons COM1/COM2 : vert = sélectionné (COM mesuré)."""
+        """Boutons COM1/COM2 : exclusifs, tous deux verts (plein = mesuré, contour = dispo)."""
         sel = self.var_com_mesure.get() or "com1"
         for com, b in (("com1", self._btn_com1), ("com2", self._btn_com2)):
             if com == sel:
-                b.configure(bg="#15803d", fg="#ffffff",
-                            activebackground="#15803d", activeforeground="#ffffff")
+                b.configure(bg=ACCENT_GREEN, fg="#ffffff",
+                            activebackground=ACCENT_GREEN, activeforeground="#ffffff",
+                            highlightbackground=ACCENT_GREEN, highlightthickness=0)
             else:
-                b.configure(bg=C["bg_input"], fg=C["txt_secondary"],
-                            activebackground=C["bg_hover"], activeforeground=C["txt_primary"])
+                b.configure(bg=C["bg_card"], fg=C["txt_green"],
+                            activebackground=C["bg_success"], activeforeground=C["txt_green"],
+                            highlightbackground=ACCENT_GREEN, highlightthickness=1)
 
     def _on_com_change(self) -> None:
         """COM mesuré (X séries) changé : sync Monitor + boutons verts."""
@@ -658,21 +633,24 @@ class ApplicationIPQ(tk.Tk):
         self.lbl_serie_status = lbl(c, "Series — / —", FONT_BOLD, C["txt_blue"], C["bg_card"])
         self.lbl_serie_status.pack(anchor="w", padx=14)
 
-        self.progress_cal = ttk.Progressbar(c, length=100, maximum=5, mode="determinate")
+        self.progress_cal = ttk.Progressbar(c, length=100, maximum=5, mode="determinate",
+                                            style="Green.Horizontal.TProgressbar")
         self.progress_cal.pack(fill="x", padx=14, pady=(6, 14))
 
         btn_cal_row = tk.Frame(f, bg=C["bg_app"])
         btn_cal_row.pack(anchor="w", padx=20, pady=(0, 20))
         self.btn_cal_start = btn(btn_cal_row, "▶  Start measurement",
                                  command=self._lancer_calibration,
-                                 color="#1a3a1a", fgcolor=C["txt_green"],
+                                 color=ACCENT_GREEN, fgcolor="#ffffff",
                                  padx=16, pady=9)
+        self.btn_cal_start.configure(activebackground=ACCENT_GREEN, activeforeground="#ffffff")
         self.btn_cal_start.pack(side="left", padx=(0, 8))
         self.btn_cal_stop = btn(btn_cal_row, "■  Stop",
                                 command=self._arreter_calibration,
-                                color=C["bg_danger"], fgcolor=C["txt_red"],
+                                color=ACCENT_RED, fgcolor="#ffffff",
                                 padx=14, pady=9)
-        self.btn_cal_stop.configure(state="disabled")
+        self.btn_cal_stop.configure(activebackground=ACCENT_RED, activeforeground="#ffffff",
+                                    state="disabled")
         self.btn_cal_stop.pack(side="left")
 
         return f
@@ -683,29 +661,27 @@ class ApplicationIPQ(tk.Tk):
         f = tk.Frame(self.frame_content, bg=C["bg_app"])
         _section_title(f, "Results — all series")
 
-        style = ttk.Style()
-        style.configure("Dark.Treeview",
-                         background=C["bg_card"], foreground=C["txt_primary"],
-                         fieldbackground=C["bg_card"], rowheight=28,
-                         font=FONT_SMALL)
-        style.configure("Dark.Treeview.Heading",
-                         background=C["bg_hover"], foreground=C["txt_secondary"],
-                         font=("Segoe UI", 9, "bold"))
-        style.map("Dark.Treeview", background=[("selected", C["bg_active"])],
-                  foreground=[("selected", C["txt_active"])])
+        table_wrap = tk.Frame(f, bg=C["bg_app"])
+        table_wrap.pack(fill="both", expand=True, padx=20, pady=(0, 8))
 
         cols = ("Series", "Distance (mm)", "Mean M", "Variance V", "Mean T (°C)", "Mean RH (%)")
-        self.tree = ttk.Treeview(f, columns=cols, show="headings",
-                                  style="Dark.Treeview", height=16)
-        widths = [60, 110, 130, 130, 110, 110]
+        self.tree = ttk.Treeview(table_wrap, columns=cols, show="headings",
+                                  style="Light.Treeview", height=15)
+        widths = [130, 110, 130, 130, 110, 110]
         for col, w in zip(cols, widths):
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=w, anchor="center", minwidth=60)
+            self.tree.column(col, width=w, anchor="center", minwidth=70)
+        self.tree.column("Series", anchor="w")
+        self.tree.tag_configure("init", foreground=C["txt_active"])
 
-        vsb = ttk.Scrollbar(f, orient="vertical", command=self.tree.yview)
+        vsb = ttk.Scrollbar(table_wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side="left", fill="both", expand=True, padx=(20, 0), pady=(0, 20))
-        vsb.pack(side="left", fill="y", pady=(0, 20), padx=(0, 8))
+        self.tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="left", fill="y")
+
+        btn(f, "↓   Export to Excel", command=self._exporter_xls,
+            color=ACCENT_VIOLET, fgcolor="#ffffff",
+            font=FONT_BOLD, padx=22, pady=10).pack(anchor="w", padx=20, pady=(4, 20))
 
         return f
 
@@ -715,16 +691,20 @@ class ApplicationIPQ(tk.Tk):
         f = tk.Frame(self.frame_content, bg=C["bg_app"])
         _section_title(f, "Event log")
 
+        wrap = tk.Frame(f, bg=C["bg_card"],
+                        highlightbackground=C["border"], highlightthickness=1)
+        wrap.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+
         self.txt_journal = tk.Text(
-            f, bg="#0a0a0a", fg=C["txt_secondary"],
+            wrap, bg=C["bg_card"], fg=C["txt_primary"],
             font=FONT_MONO, relief="flat", bd=0,
-            state="disabled", wrap="word",
-            selectbackground=C["bg_active"],
+            state="disabled", wrap="word", padx=12, pady=8,
+            selectbackground=C["bg_active"], selectforeground=C["txt_active"],
         )
-        vsb = ttk.Scrollbar(f, orient="vertical", command=self.txt_journal.yview)
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self.txt_journal.yview)
         self.txt_journal.configure(yscrollcommand=vsb.set)
-        self.txt_journal.pack(side="left", fill="both", expand=True, padx=(20, 0), pady=(0, 20))
-        vsb.pack(side="left", fill="y", pady=(0, 20), padx=(0, 8))
+        self.txt_journal.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="left", fill="y")
 
         self.txt_journal.tag_configure("err",  foreground=C["txt_red"])
         self.txt_journal.tag_configure("ok",   foreground=C["txt_green"])
@@ -784,13 +764,16 @@ class ApplicationIPQ(tk.Tk):
         self._log(msg, "err")
 
     def _vue_gpib(self, ok: bool, idn) -> None:
-        self.lbl_gpib_dot.configure(fg=C["txt_green"] if ok else C["txt_red"])
+        if hasattr(self, "lbl_gpib_dot"):
+            self.lbl_gpib_dot.configure(fg=C["txt_green"] if ok else C["txt_red"])
         if ok:
             self._log(f"GPIB connected: {idn}", "ok")
         else:
             self._log("GPIB connection failed.", "err")
 
     def _vue_visa(self, ressources) -> None:
+        if not hasattr(self, "lbl_visa_list"):
+            return
         if ressources:
             self.lbl_visa_list.configure(text="  ".join(ressources), fg=C["txt_secondary"])
         else:
@@ -799,12 +782,28 @@ class ApplicationIPQ(tk.Tk):
     def _vue_detect_indispo(self) -> None:
         self.lbl_detect.configure(text="pyserial required for auto-detect.", fg=C["txt_red"])
 
+    def _spin_detect(self) -> None:
+        """Anime l'icône du bouton Auto-detect pendant le scan (cycle de glyphes)."""
+        frames = ("◐", "◓", "◑", "◒")
+        if not self._detect_scanning:
+            if hasattr(self, "_btn_detect"):
+                self._btn_detect.configure(text="⌖   Auto-detect")
+            return
+        self._spin_i = (self._spin_i + 1) % len(frames)
+        self._btn_detect.configure(text=f"{frames[self._spin_i]}   Scanning…")
+        self.after(120, self._spin_detect)
+
     def _vue_detect_scan(self) -> None:
         self.lbl_detect.configure(text="Scanning ports…", fg=C["txt_amber"])
         for nom in ("com1", "com2", "thermo1"):
             self._port_labels[nom].configure(fg=C["txt_muted"])
+        self._detect_scanning = True
+        self._spin_detect()
 
     def _vue_detection(self, data: dict) -> None:
+        self._detect_scanning = False
+        if hasattr(self, "_btn_detect"):
+            self._btn_detect.configure(text="⌖   Auto-detect")
         mapping    = data.get("mapping", {})
         detections = data.get("detections", [])
         for cible in ("com1", "com2", "thermo1"):
@@ -831,6 +830,9 @@ class ApplicationIPQ(tk.Tk):
         if simulation:
             self._log(f"Simulation folder: {os.path.abspath(dossier)}", "info")
         self._statut(f"Configured — identifier: {indice}")
+        if hasattr(self, "btn_validate"):
+            self.btn_validate.configure(text="Connection validated",
+                                        bg=ACCENT_GREEN, activebackground=ACCENT_GREEN)
         self._naviguer("acquisition")
 
     def demander_confirmation(self, titre: str, message: str) -> bool:
@@ -878,11 +880,21 @@ class ApplicationIPQ(tk.Tk):
         getattr(self, f"lbl_init{n}_statut").configure(text="Completed", fg=C["txt_green"])
         getattr(self, f"prog_init{n}")["value"] = 30
         self._monitor.on_init_complete(cible, m, v)
+        if hasattr(self, "tree"):
+            iid = f"init_{cible}"
+            valeurs = (f"Init {cible.upper()}", f"{self.gestion_init.distance_mm:.1f}",
+                       f"{m:.6f}", f"{v:.6f}", f"{t_moy:.2f}", f"{hr_moy:.2f}")
+            if self.tree.exists(iid):
+                self.tree.item(iid, values=valeurs)
+            else:
+                pos = len([i for i in self.tree.get_children("") if str(i).startswith("init_")])
+                self.tree.insert("", pos, iid=iid, values=valeurs, tags=("init",))
         self._log(f"COM{n} initialization — M={m:.6f}  V={v:.6f}", "ok")
 
     def _vue_init_pret(self) -> None:
         self.btn_valider_init.configure(
-            state="normal", bg="#1a3a1a", fg=C["txt_green"])
+            state="normal", bg=ACCENT_GREEN, fg="#ffffff",
+            activebackground=ACCENT_GREEN, activeforeground="#ffffff")
         self.lbl_val_hint.configure(
             text="Both acquisitions are ready. Click to approve.",
             fg=C["txt_secondary"],
@@ -890,8 +902,8 @@ class ApplicationIPQ(tk.Tk):
 
     def _vue_init_approuve(self) -> None:
         self.btn_valider_init.configure(
-            text="Initialization approved", bg="#0a2a0a",
-            fg=C["txt_green"], state="disabled",
+            text="Initialization approved", bg="#2e7d4f",
+            fg="#ffffff", state="disabled",
         )
         self.lbl_val_hint.configure(
             text="Initialization approved — measurement may now be started.",
@@ -951,7 +963,7 @@ class ApplicationIPQ(tk.Tk):
         self.progress_cal["value"] = x
         self._badge(f"● Measurement — {x} / {nb}", C["txt_amber"], "#3a2a00")
         self.tree.insert("", "end", values=(
-            x, f"{dist:.1f}", f"{m:.6f}", f"{v:.6f}", f"{t_moy:.2f}", f"{hr_moy:.2f}"))
+            f"Series {x}", f"{dist:.1f}", f"{m:.6f}", f"{v:.6f}", f"{t_moy:.2f}", f"{hr_moy:.2f}"))
         self._monitor.on_serie_complete(x, m, v)
         self._log(f"Series {x}/{nb} — M={m:.6f}  distance={dist:.1f} mm", "ok")
 
@@ -1045,12 +1057,16 @@ class ApplicationIPQ(tk.Tk):
         if self.gp.mode_simulation:
             self._btn_sim_toggle.configure(
                 text="Disable simulation mode",
-                bg=C["bg_danger"], fg=C["txt_red"],
+                bg=ACCENT_RED, fg="#ffffff",
+                activebackground=ACCENT_RED, activeforeground="#ffffff",
+                highlightthickness=0,
             )
         else:
             self._btn_sim_toggle.configure(
                 text="Enable simulation mode",
-                bg="#1a2a1a", fg=C["txt_muted"],
+                bg=C["bg_card"], fg=C["txt_secondary"],
+                activebackground=C["bg_hover"], activeforeground=C["txt_primary"],
+                highlightbackground=C["border_light"], highlightthickness=1,
             )
 
     def _vue_cle_configuree(self) -> None:
@@ -1094,57 +1110,58 @@ class ApplicationIPQ(tk.Tk):
 
         _section_title(inner, "Administration")
 
-        # Bandeau avertissement mode dev
-        self._admin_warn_frame = tk.Frame(inner, bg="#3a1500",
-                                           highlightbackground="#7a3000",
+        # Bandeau avertissement mode dev (clair, ambre)
+        self._admin_warn_frame = tk.Frame(inner, bg="#FBF1DD",
+                                           highlightbackground="#E6C97A",
                                            highlightthickness=1)
         if not admin_key_configured():
             self._admin_warn_frame.pack(fill="x", padx=20, pady=(0, 12))
         lbl(self._admin_warn_frame,
-            "⚠  MODE DÉVELOPPEMENT — Mot de passe par défaut 'admin' actif.\n"
-            "   Configurez une vraie clé avant toute utilisation en production.",
-            FONT_SMALL, "#fbbf24", "#3a1500").pack(padx=14, pady=10, anchor="w")
+            "⚠  Development mode — default password 'admin' is active.\n"
+            "    Configure a real key before any production use.",
+            FONT_SMALL, "#8A6D1F", "#FBF1DD").pack(padx=14, pady=10, anchor="w")
 
-        # ── Opérateur connecté ─────────────────────────────────────────────
+        # ── Current session ────────────────────────────────────────────────
         c_op = card(inner)
         c_op.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c_op, "Session en cours", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
+        lbl(c_op, "Current session", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
             anchor="w", padx=14, pady=(12, 4))
         lbl(c_op,
-            f"Opérateur : {self.journal.operateur}\n"
-            f"Journal   : {self.journal.chemin}",
+            f"Operator : {self.journal.operateur}\n"
+            f"Log      : {self.journal.chemin}",
             FONT_MONO, C["txt_secondary"], C["bg_card"]).pack(
             anchor="w", padx=14, pady=(0, 12))
 
-        # ── Mode simulation ────────────────────────────────────────────────
+        # ── Simulation mode ────────────────────────────────────────────────
         c_sim = card(inner)
         c_sim.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c_sim, "Mode simulation", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
+        lbl(c_sim, "Simulation mode", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
             anchor="w", padx=14, pady=(12, 4))
         lbl(c_sim,
-            "Ports COM non requis — valeurs générées artificiellement.\n"
-            "Doit être activé AVANT la création de la session Excel.\n"
-            "Les données produites ne sont pas valides pour la métrologie.",
+            "COM ports not required — values are generated artificially.\n"
+            "Must be enabled BEFORE the Excel session is created.\n"
+            "Produced data are not metrologically valid.",
             FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(anchor="w", padx=14, pady=(0, 8))
         row_sim = tk.Frame(c_sim, bg=C["bg_card"])
         row_sim.pack(anchor="w", padx=14, pady=(0, 12))
         self._btn_sim_toggle = btn(
             row_sim, "",
             command=self._basculer_simulation,
-            color="#1a2a1a", fgcolor=C["txt_muted"],
             padx=14, pady=6,
         )
         self._btn_sim_toggle.pack(side="left")
-        btn(row_sim, " Open simulation exports",
-            command=self._ouvrir_dossier_simulation,
-            color=C["bg_hover"], fgcolor=C["txt_secondary"],
-            padx=12, pady=6).pack(side="left", padx=(8, 0))
+        b_open_sim = btn(row_sim, "Open simulation exports",
+                         command=self._ouvrir_dossier_simulation,
+                         color=C["bg_card"], fgcolor=C["txt_secondary"],
+                         padx=12, pady=6)
+        b_open_sim.configure(highlightbackground=C["border_light"], highlightthickness=1)
+        b_open_sim.pack(side="left", padx=(8, 0))
         self._actualiser_btn_sim()
 
-        # ── Journal d'audit ────────────────────────────────────────────────
+        # ── Audit log ──────────────────────────────────────────────────────
         c_aud = card(inner)
         c_aud.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c_aud, "Journal d'audit", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
+        lbl(c_aud, "Audit log", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
             anchor="w", padx=14, pady=(12, 4))
         self._lbl_audit_result = lbl(
             c_aud, "Not verified", FONT_SMALL, C["txt_muted"], C["bg_card"])
@@ -1153,36 +1170,40 @@ class ApplicationIPQ(tk.Tk):
         row_aud.pack(anchor="w", padx=14, pady=(0, 12))
         btn(row_aud, "Verify today's log",
             command=self._verifier_journal_audit,
-            color=C["bg_active"], fgcolor=C["txt_active"],
-            padx=10, pady=5).pack(side="left", padx=(0, 8))
-        btn(row_aud, "Open folder",
-            command=self._ouvrir_dossier_audit,
-            color=C["bg_hover"], fgcolor=C["txt_secondary"],
-            padx=10, pady=5).pack(side="left")
+            color=ACCENT_VIOLET, fgcolor="#ffffff",
+            padx=12, pady=6).pack(side="left", padx=(0, 8))
+        b_open_aud = btn(row_aud, "Open folder",
+                         command=self._ouvrir_dossier_audit,
+                         color=C["bg_card"], fgcolor=C["txt_secondary"],
+                         padx=12, pady=6)
+        b_open_aud.configure(highlightbackground=C["border_light"], highlightthickness=1)
+        b_open_aud.pack(side="left")
 
-        # ── Clé administrateur ─────────────────────────────────────────────
+        # ── Administrator key ──────────────────────────────────────────────
         c_key = card(inner)
         c_key.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c_key, "Clé administrateur", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
+        lbl(c_key, "Administrator key", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
             anchor="w", padx=14, pady=(12, 4))
-        statut_cle = ("Clé configurée (PBKDF2-SHA256)." if admin_key_configured()
-                      else "Aucune clé — mot de passe dev 'admin' actif.")
+        statut_cle = ("Key configured (PBKDF2-SHA256)." if admin_key_configured()
+                      else "No key — dev password 'admin' active.")
         self._lbl_cle_statut = lbl(
             c_key, statut_cle, FONT_SMALL,
             C["txt_green"] if admin_key_configured() else C["txt_amber"],
             C["bg_card"],
         )
         self._lbl_cle_statut.pack(anchor="w", padx=14, pady=(0, 8))
-        btn(c_key, "new key",
-            command=self._configurer_cle_admin,
-            color=C["bg_hover"], fgcolor=C["txt_secondary"],
-            padx=10, pady=5).pack(anchor="w", padx=14, pady=(0, 12))
+        b_key = btn(c_key, "New key",
+                    command=self._configurer_cle_admin,
+                    color=C["bg_card"], fgcolor=C["txt_secondary"],
+                    padx=12, pady=6)
+        b_key.configure(highlightbackground=C["border_light"], highlightthickness=1)
+        b_key.pack(anchor="w", padx=14, pady=(0, 12))
 
-        # ── Verrouiller ────────────────────────────────────────────────────
-        btn(inner, " lock session admin",
+        # ── Lock ───────────────────────────────────────────────────────────
+        btn(inner, "🔒  Lock admin session",
             command=self._verrouiller_admin,
-            color="#200808", fgcolor=C["txt_red"],
-            padx=14, pady=8).pack(anchor="w", padx=20, pady=(10, 24))
+            color=ACCENT_RED, fgcolor="#ffffff",
+            padx=16, pady=9).pack(anchor="w", padx=20, pady=(10, 24))
 
         return f
 
@@ -1402,27 +1423,6 @@ class _ScatterPlot(tk.Canvas):
 
         tracer(self._com1, C["txt_blue"])
         tracer(self._com2, C["txt_amber"])
-
-
-def _section_title(parent, text: str) -> None:
-    f = tk.Frame(parent, bg=C["bg_app"])
-    f.pack(fill="x", padx=20, pady=(16, 12))
-    tk.Label(f, text=text, font=("Segoe UI", 13, "bold"),
-             fg=C["txt_primary"], bg=C["bg_app"]).pack(side="left")
-    tk.Frame(f, height=1, bg=C["border"]).pack(
-        side="left", fill="x", expand=True, padx=(12, 0), pady=6)
-
-
-def _entry_dark(parent, textvariable=None, width=20, **kw):
-    return tk.Entry(
-        parent, textvariable=textvariable, width=width,
-        bg=C["bg_input"], fg=C["txt_primary"],
-        insertbackground=C["txt_primary"],
-        relief="flat", bd=0,
-        highlightbackground=C["border_light"],
-        highlightthickness=1,
-        font=FONT, **kw,
-    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

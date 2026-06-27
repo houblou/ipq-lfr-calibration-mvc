@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Logs applicatifs
+logs/
+
+# Données de session
+*.xlsx
+*.xls
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp

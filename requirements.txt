@@ -1,0 +1,19 @@
+# requirements.txt — Projet IPQ : Adaptation LabVIEW -> Python
+# Compatible Python 3.8+
+#
+# Installation :
+#   pip install -r requirements.txt
+
+# Communication instruments
+pyserial>=3.5
+pyvisa>=1.12.0
+
+# Calcul numérique (optionnel — numpy pour validation des stats)
+numpy>=1.24.0
+
+# Export Excel
+openpyxl>=3.1.0
+
+# Audio (Windows uniquement — winsound est inclus dans Python)
+# Sur Linux/Mac : décommenter la ligne suivante
+# simpleaudio>=1.0.4

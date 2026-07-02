@@ -57,7 +57,17 @@ class Acquisition:
             # Temperature read BETWEEN measurements to avoid simultaneous GPIB access
             if not self._sleep_interruptible(ACQ_INTERVAL_S / 2):
                 break
-            t, hr = self.gp.lire_thermo()
+            # B : un glitch thermo ponctuel (trame RUSKA muette, etc.) ne doit pas
+            # tuer la série. On réutilise la dernière valeur connue ; mais si la
+            # toute première lecture échoue, on laisse remonter pour échouer proprement.
+            try:
+                t, hr = self.gp.lire_thermo()
+            except Exception as exc:
+                if not self.t_vals:
+                    raise
+                t, hr = self.t_vals[-1], self.hr_vals[-1]
+                logger.warning("%s: thermo read failed at point %d, reusing last value: %s",
+                               contexte, i, exc)
             self.t_vals.append(t)
             self.hr_vals.append(hr)
             logger.debug("%s N[%d] = %s  T=%.1f HR=%.1f", contexte, i, valeurs, t, hr)

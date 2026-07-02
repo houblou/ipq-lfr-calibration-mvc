@@ -52,10 +52,19 @@ class GestionInitialisation:
         callback_fin(M, V, T_moy, HR_moy, date, heure) appelé à la fin (sauf arrêt).
         """
         def _run():
-            n, m, v, t_moy, hr_moy = acq_instance.lancer_init(
-                cible,
-                callback_point=callback_point,
-            )
+            # B : toute exception du thread d'init (ex. lecture thermo qui lève) doit
+            # TOUJOURS rappeler callback_fin(None,…) pour que l'UI réinitialise son
+            # état (_acq_en_cours) — sinon le thread meurt et l'appli reste figée.
+            try:
+                n, m, v, t_moy, hr_moy = acq_instance.lancer_init(
+                    cible,
+                    callback_point=callback_point,
+                )
+            except Exception as exc:
+                logger.exception("Init %s échouée : %s", cible.upper(), exc)
+                if callback_fin:
+                    callback_fin(None, None, None, None, None, None)
+                return
 
             # Acquisition interrompue : on ne valide pas cette init
             if getattr(acq_instance, "arrete", False):

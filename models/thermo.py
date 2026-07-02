@@ -44,15 +44,19 @@ class ThermoService:
         self._thread.start()
 
     def arreter(self) -> None:
+        # E : attendre la fin de la lecture en cours avant de rendre la main, pour
+        # que fermer_tout() ne ferme pas le port pendant que ce thread lit dessus.
         self._actif = False
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=self._intervalle + 0.5)
+        self._thread = None
 
     def _boucle(self, on_mesure, on_indispo, on_erreur) -> None:
         while self._actif:
             if not self._est_occupe():
-                port = getattr(self.gp, "thermo1", None)
                 try:
-                    if (not self.gp.mode_simulation
-                            and (port is None or not port.is_open)):
+                    if not self.gp.thermo_actif():
                         on_indispo()
                     else:
                         t, hr = self.gp.lire_thermo()

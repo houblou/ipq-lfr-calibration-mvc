@@ -16,15 +16,15 @@ class ConnexionController:
 
     def rafraichir_ports(self) -> None:
         app = self.app
-        app._vue_ports_disponibles(app.gp.lister_ports_serie())
+        app._vue_ports_disponibles(app.gp.lister_instruments())   # série (COMx) + VISA (GPIB…)
 
     def connecter(self, cible: str) -> None:
         app = self.app
         port = app._port_vars[cible].get().strip()
         if not port:
-            app.afficher_avertissement("Missing port", f"Select a port for {cible.upper()}.")
+            app.afficher_avertissement("Missing instrument", f"Select an instrument for {cible.upper()}.")
             return
-        if app.gp.connecter_serie(port, cible):
+        if app.gp.connecter(port, cible):   # bus auto : COMx -> série, GPIB… -> VISA
             app._vue_port_ok(cible, port)
             if not app.gp.backboard_actif:
                 app.gp.demarrer_backboard(
@@ -32,18 +32,6 @@ class ConnexionController:
         else:
             errs = app.gp.get_erreurs()
             app._vue_port_echec(cible, errs[-1] if errs else "Connection failed.")
-
-    def connecter_gpib(self) -> None:
-        app = self.app
-        adresse = app.var_gpib.get().strip()
-        if not adresse:
-            app.afficher_avertissement("Missing address", "Enter a VISA address.")
-            return
-        ok = app.gp.connecter_gpib(adresse)
-        app._vue_gpib(ok, app.gp.noms_appareils.get("gpib", "—") if ok else None)
-
-    def lister_visa(self) -> None:
-        self.app._vue_visa(self.app.gp.lister_ressources_visa())
 
     def auto_detecter(self) -> None:
         app = self.app

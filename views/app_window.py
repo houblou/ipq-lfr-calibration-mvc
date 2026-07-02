@@ -171,11 +171,18 @@ class ApplicationIPQ(tk.Tk):
                                         highlightbackground=C["border"], highlightthickness=1)
         self.frame_statusbar.pack(side="bottom", fill="x")
         self.frame_statusbar.pack_propagate(False)
+        # Barre de progression de l'opération en cours (init / mesure) — remplace
+        # l'ancien message horodaté (l'OS affiche déjà l'heure).
+        self.progress_statut = ttk.Progressbar(
+            self.frame_statusbar, mode="determinate", maximum=100, length=220,
+            style="Green.Horizontal.TProgressbar",
+        )
+        self.progress_statut.pack(side="right", padx=10, pady=8)
         self.lbl_statut = tk.Label(
             self.frame_statusbar, text="Ready.",
             font=FONT_SMALL, bg=C["bg_topbar"], fg=C["txt_muted"], anchor="w", padx=10,
         )
-        self.lbl_statut.pack(fill="both", expand=True)
+        self.lbl_statut.pack(side="left", fill="both", expand=True)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Sidebar
@@ -324,7 +331,6 @@ class ApplicationIPQ(tk.Tk):
         self.var_hr      = tk.StringVar(value="RH: — %")
         self.var_dist_tb = tk.StringVar(value="— mm")
         self.var_date    = tk.StringVar(value="")
-        self.var_heure   = tk.StringVar(value="")
 
         # Badge opérateur
         self.lbl_operateur = tk.Label(
@@ -339,7 +345,6 @@ class ApplicationIPQ(tk.Tk):
         sensors_frame.pack(side="right", padx=14)
 
         for var, icon in [
-            (self.var_heure,   "⏱"),
             (self.var_date,    "📅"),
             (self.var_dist_tb, "⇔"),
             (self.var_hr,      "💧"),
@@ -397,23 +402,20 @@ class ApplicationIPQ(tk.Tk):
         lbl(col_id, "Notation index", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(anchor="w")
         champ_saisie(col_id, self.var_indice).pack(fill="x", pady=(3, 0))
 
-        # GPIB conservé en arrière-plan (non affiché) — ne pas casser le contrôleur.
-        self.var_gpib = tk.StringVar(value="GPIB0::1::INSTR")
-
         # ── Ports instruments ─────────────────────────────────────────────
         c_ports = card(inner)
         c_ports.pack(fill="x", padx=20, pady=(0, 12))
-        lbl(c_ports, "INSTRUMENT PORTS", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(
+        lbl(c_ports, "INSTRUMENTS  (serial + GPIB)", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(
             anchor="w", padx=14, pady=(12, 4))
         lbl(c_ports,
-            "Assign each role to its serial port — ports may change when the card is reconnected.",
+            "Assign each role to a detected instrument — COM ports and GPIB addresses appear together.",
             FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(anchor="w", padx=14, pady=(0, 8))
 
         self._port_vars   = {}
         self._port_labels = {}
-        for nom, label in [("com1", "COM1   ·   Multimeter 1"),
-                           ("com2", "COM2   ·   Multimeter 2"),
-                           ("thermo1", "Thermo1   ·   Thermohygrometer")]:
+        for nom, label in [("com1", "Multimeter 1"),
+                           ("com2", "Multimeter 2"),
+                           ("thermo1", "Thermohygrometer")]:
             row = tk.Frame(c_ports, bg=C["bg_card"])
             row.pack(fill="x", padx=14, pady=5)
             lbl(row, label, FONT, C["txt_primary"], C["bg_card"]).pack(side="left")
@@ -425,11 +427,11 @@ class ApplicationIPQ(tk.Tk):
 
             var = tk.StringVar()
             self._port_vars[nom] = var
-            cb = ttk.Combobox(row, textvariable=var, width=12, state="readonly",
+            cb = ttk.Combobox(row, textvariable=var, width=18, state="readonly",
                               font=FONT_SMALL)
             cb.pack(side="right", padx=(0, 8))
 
-            # Connexion du port laissée disponible (la gestion fine des COM est faite à part).
+            # Connexion du port laissée disponible (bus auto : COMx série, GPIB VISA).
             btn(row, "Connect",
                 command=lambda n=nom: self._connecter_port(n),
                 padx=10, pady=3).pack(side="right", padx=(0, 8))
@@ -443,6 +445,31 @@ class ApplicationIPQ(tk.Tk):
         self._btn_detect.pack(side="left", padx=(8, 0))
         self.lbl_detect = lbl(c_ports, "", FONT_SMALL, C["txt_muted"], C["bg_card"])
         self.lbl_detect.pack(anchor="w", padx=14, pady=(6, 12))
+
+        # ── Source ambiante (T / RH) ──────────────────────────────────────
+        c_th = card(inner)
+        c_th.pack(fill="x", padx=20, pady=(0, 12))
+        lbl(c_th, "AMBIENT SOURCE  (T / RH)", FONT_LABEL, C["txt_muted"], C["bg_card"]).pack(
+            anchor="w", padx=14, pady=(12, 6))
+        row_src = tk.Frame(c_th, bg=C["bg_card"])
+        row_src.pack(fill="x", padx=14, pady=(0, 6))
+        lbl(row_src, "Source", FONT, C["txt_primary"], C["bg_card"]).pack(side="left")
+        self.var_thermo_source = tk.StringVar(value="RUSKA 2456-LEM")
+        cb_src = ttk.Combobox(row_src, textvariable=self.var_thermo_source, width=18,
+                              state="readonly", font=FONT_SMALL,
+                              values=["Instrument (ASCII)", "RUSKA 2456-LEM", "Manual"])
+        cb_src.pack(side="left", padx=(10, 0))
+        cb_src.bind("<<ComboboxSelected>>", lambda _e: self._appliquer_thermo_source())
+
+        row_man = tk.Frame(c_th, bg=C["bg_card"])
+        row_man.pack(fill="x", padx=14, pady=(0, 10))
+        lbl(row_man, "Manual   T (°C)", FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(side="left")
+        self.var_thermo_t = tk.StringVar(value="20.0")
+        champ_saisie(row_man, self.var_thermo_t, width=7).pack(side="left", padx=(4, 14))
+        lbl(row_man, "RH (%)", FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(side="left")
+        self.var_thermo_hr = tk.StringVar(value="50.0")
+        champ_saisie(row_man, self.var_thermo_hr, width=7).pack(side="left", padx=(4, 14))
+        btn(row_man, "Apply", command=self._appliquer_thermo_source, padx=10, pady=3).pack(side="left")
 
         # ── Valider la connexion (rouge → vert) ───────────────────────────
         self.btn_validate = btn_accent(
@@ -735,11 +762,22 @@ class ApplicationIPQ(tk.Tk):
     def _connecter_port(self, cible: str) -> None:
         self._ctrl_connexion.connecter(cible)
 
-    def _connecter_gpib(self) -> None:
-        self._ctrl_connexion.connecter_gpib()
-
-    def _lister_visa(self) -> None:
-        self._ctrl_connexion.lister_visa()
+    def _appliquer_thermo_source(self) -> None:
+        """Applique la source T/RH choisie : instrument ASCII, RUSKA, ou valeurs manuelles."""
+        libelle = self.var_thermo_source.get()
+        mode = {"Instrument (ASCII)": "ascii",
+                "RUSKA 2456-LEM":     "ruska",
+                "Manual":             "manuel"}.get(libelle, "ascii")
+        self.gp.set_thermo_mode(mode)
+        if mode == "manuel":
+            try:
+                t  = float(self.var_thermo_t.get().replace(",", "."))
+                hr = float(self.var_thermo_hr.get().replace(",", "."))
+            except ValueError:
+                self.afficher_avertissement("Invalid value", "Enter numeric T and RH.")
+                return
+            self.gp.set_thermo_manuel(t, hr)
+        self._log(f"Ambient source: {libelle}", "ok")
 
     def _auto_detecter(self) -> None:
         self._ctrl_connexion.auto_detecter()
@@ -753,31 +791,17 @@ class ApplicationIPQ(tk.Tk):
         liste = [""] + ports
         for widget in self._iter_comboboxes():
             widget["values"] = liste
-        self._log(f"Detected ports: {ports or 'none'}")
+        self._log(f"Detected instruments: {ports or 'none'}")
 
     def _vue_port_ok(self, cible: str, port: str) -> None:
         self._port_labels[cible].configure(fg=C["txt_green"])
-        self._log(f"{cible.upper()} connected on {port}", "ok")
+        idn = self.gp.get_identite(cible)
+        suffixe = f" — {idn}" if idn else ""
+        self._log(f"{cible.upper()} connected on {port}{suffixe}", "ok")
 
     def _vue_port_echec(self, cible: str, msg: str) -> None:
         self._port_labels[cible].configure(fg=C["txt_red"])
         self._log(msg, "err")
-
-    def _vue_gpib(self, ok: bool, idn) -> None:
-        if hasattr(self, "lbl_gpib_dot"):
-            self.lbl_gpib_dot.configure(fg=C["txt_green"] if ok else C["txt_red"])
-        if ok:
-            self._log(f"GPIB connected: {idn}", "ok")
-        else:
-            self._log("GPIB connection failed.", "err")
-
-    def _vue_visa(self, ressources) -> None:
-        if not hasattr(self, "lbl_visa_list"):
-            return
-        if ressources:
-            self.lbl_visa_list.configure(text="  ".join(ressources), fg=C["txt_secondary"])
-        else:
-            self.lbl_visa_list.configure(text="No VISA resource detected.", fg=C["txt_red"])
 
     def _vue_detect_indispo(self) -> None:
         self.lbl_detect.configure(text="pyserial required for auto-detect.", fg=C["txt_red"])
@@ -851,6 +875,8 @@ class ApplicationIPQ(tk.Tk):
     def _maj_init_pt(self, cible: str, i: int, valeur, t: float, hr: float) -> None:
         n = cible[-1]
         getattr(self, f"prog_init{n}")["value"] = i
+        self.progress_statut.configure(maximum=30)   # barre du status bar (30 points)
+        self.progress_statut["value"] = i
         self._monitor.on_init_point(cible, i, valeur, t, hr)
         self.var_t.set(f"T: {t:.1f} °C")
         self.var_hr.set(f"RH: {hr:.1f} %")
@@ -948,6 +974,8 @@ class ApplicationIPQ(tk.Tk):
     def _vue_mesure_demarrage(self, x: int, cible: str) -> None:
         self.progress_cal.configure(maximum=x)
         self.progress_cal["value"] = 0
+        self.progress_statut.configure(maximum=x)   # barre du status bar
+        self.progress_statut["value"] = 0
         self._monitor.set_com_actif(cible)
         self._monitor.set_nb_series(x)
         self.btn_cal_start.configure(state="disabled")
@@ -961,6 +989,7 @@ class ApplicationIPQ(tk.Tk):
     def _vue_mesure_serie(self, x, nb, m, v, t_moy, hr_moy, dist) -> None:
         self.lbl_serie_status.configure(text=f"Series {x} / {nb}")
         self.progress_cal["value"] = x
+        self.progress_statut["value"] = x   # barre du status bar
         self._badge(f"● Measurement — {x} / {nb}", C["txt_amber"], "#3a2a00")
         self.tree.insert("", "end", values=(
             f"Series {x}", f"{dist:.1f}", f"{m:.6f}", f"{v:.6f}", f"{t_moy:.2f}", f"{hr_moy:.2f}"))
@@ -1219,12 +1248,9 @@ class ApplicationIPQ(tk.Tk):
             return True
         manquants = []
         for cible in cibles:
-            port = getattr(self.gp, cible, None)
-            try:
-                ouvert = bool(port is not None and port.is_open)
-            except Exception:
-                ouvert = False
-            if not ouvert:
+            # A : test conscient du bus (le série a .is_open, pas le VISA/GPIB).
+            actif = self.gp.thermo_actif() if cible == "thermo1" else self.gp.role_connecte(cible)
+            if not actif:
                 manquants.append(cible.upper())
 
         if not manquants:
@@ -1244,8 +1270,7 @@ class ApplicationIPQ(tk.Tk):
         self.badge_frame.configure(bg=bg, highlightbackground=fg)
 
     def _statut(self, msg: str) -> None:
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.lbl_statut.configure(text=f"  {ts}  {msg}")
+        self.lbl_statut.configure(text=f"  {msg}")
         logger.info(msg)
 
     def _log(self, msg: str, niveau: str = "info") -> None:
@@ -1274,10 +1299,9 @@ class ApplicationIPQ(tk.Tk):
             messagebox.showinfo("Export", "No Excel file is open.")
 
     def _tick_horloge(self) -> None:
-        now = datetime.now()
-        self.var_date.set(now.strftime("%d/%m/%Y"))
-        self.var_heure.set(now.strftime("%H:%M:%S"))
-        self.after(1000, self._tick_horloge)
+        # Heure retirée (l'OS l'affiche déjà) ; on tient seulement la date à jour.
+        self.var_date.set(datetime.now().strftime("%d/%m/%Y"))
+        self.after(60_000, self._tick_horloge)
 
     def _quitter(self) -> None:
         if self._acq_en_cours:
@@ -1339,90 +1363,6 @@ class _ScrollFrame(tk.Frame):
         sb.pack(side="right", fill="y")
         canvas.bind_all("<MouseWheel>",
                         lambda e: canvas.yview_scroll(int(-1 * e.delta / 120), "units"))
-
-
-class _ScatterPlot(tk.Canvas):
-    """Nuage de points auto-adaptatif pour les mesures COM1 et COM2."""
-
-    MARGE_GAUCHE = 72
-    MARGE_DROITE = 20
-    MARGE_HAUT = 16
-    MARGE_BAS = 58
-
-    def __init__(self, parent, **kw):
-        kw.setdefault("bg", C["bg_input"])
-        kw.setdefault("highlightthickness", 1)
-        kw.setdefault("highlightbackground", C["border_light"])
-        super().__init__(parent, **kw)
-        self._com1 = []
-        self._com2 = []
-        self.bind("<Configure>", lambda _event: self._dessiner())
-        self.after_idle(self._dessiner)
-
-    def ajouter_point(self, index: int, com1, com2) -> None:
-        """Ajoute les valeurs valides du point index et redessine le graphique."""
-        if com1 is not None:
-            self._com1.append((index, float(com1)))
-        if com2 is not None:
-            self._com2.append((index, float(com2)))
-        self._dessiner()
-
-    def reinitialiser(self) -> None:
-        self._com1 = []
-        self._com2 = []
-        self._dessiner()
-
-    def _bornes_y(self):
-        valeurs = [y for _, y in self._com1] + [y for _, y in self._com2]
-        if not valeurs:
-            return 0.0, 1.0
-        minimum = min(valeurs)
-        maximum = max(valeurs)
-        amplitude = maximum - minimum
-        marge = amplitude * 0.10 if amplitude > 0 else max(abs(maximum) * 0.05, 0.5)
-        return minimum - marge, maximum + marge
-
-    def _dessiner(self) -> None:
-        self.delete("all")
-        largeur = self.winfo_width()
-        hauteur = self.winfo_height()
-        if largeur < 160 or hauteur < 100:
-            return
-
-        x0 = self.MARGE_GAUCHE
-        x1 = largeur - self.MARGE_DROITE
-        y0 = self.MARGE_HAUT
-        y1 = hauteur - self.MARGE_BAS
-        min_y, max_y = self._bornes_y()
-
-        for pas in range(5):
-            ratio = pas / 4
-            y = y1 - ratio * (y1 - y0)
-            valeur = min_y + ratio * (max_y - min_y)
-            self.create_line(x0, y, x1, y, fill=C["border"], width=1)
-            self.create_text(x0 - 8, y, text=f"{valeur:.6g}", anchor="e",
-                             fill=C["txt_muted"], font=FONT_SMALL)
-
-        for index in (1, 5, 10, 15, 20, 25, 30):
-            x = x0 + (index - 1) / 29 * (x1 - x0)
-            self.create_line(x, y0, x, y1, fill=C["border"], width=1)
-            self.create_text(x, y1 + 8, text=str(index), anchor="n",
-                             fill=C["txt_muted"], font=FONT_SMALL)
-
-        self.create_text((x0 + x1) / 2, hauteur - 6, text="Sample index N[i]",
-                         anchor="s", fill=C["txt_secondary"], font=FONT_SMALL)
-
-        def tracer(points, couleur):
-            for index, valeur in points:
-                x = x0 + (index - 1) / 29 * (x1 - x0)
-                ratio = (valeur - min_y) / (max_y - min_y)
-                y = y1 - ratio * (y1 - y0)
-                rayon = 3
-                self.create_oval(x - rayon, y - rayon, x + rayon, y + rayon,
-                                 fill=couleur, outline="")
-
-        tracer(self._com1, C["txt_blue"])
-        tracer(self._com2, C["txt_amber"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════

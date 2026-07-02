@@ -34,6 +34,9 @@ class _FakeGP:
         self.mode_simulation = simulation
         self.thermo1 = type("P", (), {"is_open": True})() if connecte else None
 
+    def thermo_actif(self):
+        return self.mode_simulation or self.thermo1 is not None
+
     def lire_thermo(self):
         return (22.5, 48.0)
 
@@ -54,11 +57,9 @@ class TestArborescence(unittest.TestCase):
         from controllers.thermo_controller import ThermoController
         from views.app_window import ApplicationIPQ
         from views.monitor import MonitorTab
-        from tools.diagnostic_ports import FenetrePhase1
         for obj in (Acquisition, BoucleCalibration, GestionAudio, GestionInitialisation,
                     JournalAudit, detecter, InitController, MesureController, AdminController,
-                    ConnexionController, ThermoController, ApplicationIPQ, MonitorTab,
-                    FenetrePhase1):
+                    ConnexionController, ThermoController, ApplicationIPQ, MonitorTab):
             self.assertTrue(callable(obj))
 
 
@@ -189,8 +190,8 @@ class TestInterfaceVue(unittest.TestCase):
         "_vue_mesure_interrompu", "_vue_mesure_termine",
         "_vue_admin_deverrouille", "_vue_admin_verrouille", "_vue_simulation",
         "_vue_cle_configuree", "_vue_audit_resultat", "_actualiser_btn_sim",
-        "_vue_ports_disponibles", "_vue_port_ok", "_vue_port_echec", "_vue_gpib",
-        "_vue_visa", "_vue_detect_indispo", "_vue_detect_scan", "_vue_detection",
+        "_vue_ports_disponibles", "_vue_port_ok", "_vue_port_echec",
+        "_vue_detect_indispo", "_vue_detect_scan", "_vue_detection",
         "_vue_operateur", "_vue_connexion_ok",
         "_log", "_badge", "_statut", "_naviguer", "after",
     ]

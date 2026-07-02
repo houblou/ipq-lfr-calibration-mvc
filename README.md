@@ -22,31 +22,6 @@ Automatic Excel export — 30 raw data points per series plus a summary row (mea
 Architecture
 The project follows the MVC pattern:
 
-Code
-main.py                   Entry point, Windows DPI scaling
-├── views/                View layer (Tkinter) — main window, theme, live monitor
-├── controllers/          Controllers — UI-free orchestration logic
-│   ├── connexion_controller.py
-│   ├── init_controller.py
-│   ├── mesure_controller.py
-│   ├── thermo_controller.py
-│   └── admin_controller.py
-├── models/               Business logic and data
-│   ├── acquisition.py        30-point loop + statistics
-│   ├── calibration.py        X-series loop + audio beeps
-│   ├── detection.py          Automatic COM/VISA instrument detection
-│   ├── export_xls.py         Multi-series Excel export
-│   ├── ports.py              RS-232 / GPIB-VISA abstraction
-│   ├── initialisation.py     Global initialization state
-│   ├── stats.py              Metrological calculations (mean, variance)
-│   ├── audit.py              Event journal
-│   ├── security.py           Admin key storage (PBKDF2 hash)
-│   ├── thermo.py             Hart Scientific 1620 driver (RS-232)
-│   └── thermo_ruska.py       Ruska thermometer driver (RS-232)
-└── core/
-    ├── config.py             Constants (baud rate, NB_POINTS=30, delays…)
-    ├── logger.py             Logging configuration
-    └── paths.py              System paths (desktop, file naming)
 Requirements
 Package	Minimum version
 Python	3.8

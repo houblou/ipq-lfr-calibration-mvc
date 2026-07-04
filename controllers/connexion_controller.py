@@ -2,6 +2,7 @@
 """controllers/connexion_controller.py — connexion instruments + création de session Excel (sans widgets)."""
 import os
 import threading
+import time
 
 from models.export_xls import ExportXLS
 from models.audit import EV_CONNEXION, EV_EXPORT_EXCEL, EV_ERREUR
@@ -38,18 +39,50 @@ class ConnexionController:
         try:
             import models.detection as detect_com
         except Exception as exc:
-            app._log(f"Auto-detect unavailable: {exc}", "err")
-            return
-        if not getattr(detect_com, "PYSERIAL_OK", False):
-            app._vue_detect_indispo()
-            return
+            detect_com = None
+            app._log(f"Serial auto-detect unavailable: {exc}", "err")
         app._vue_detect_scan()
 
         def _run():
-            data = detect_com.detecter()
-            app.after(0, lambda: self._appliquer(data))
+            # Scan série (si pyserial dispo), borné à 5 s au total : sondes rapides
+            # (0.4 s) + deadline absolu → l'Auto-detect ne tourne jamais plus de 5 s.
+            # try/finally : _appliquer est TOUJOURS appelé (arrête le spinner et
+            # repeuple les menus), même en cas d'erreur → jamais de blocage.
+            data = {"mapping": {}, "detections": []}
+            try:
+                if detect_com is not None and getattr(detect_com, "PYSERIAL_OK", False):
+                    data = detect_com.detecter(timeout=0.3, deadline=time.time() + 4.0)
+                data = self._completer_avec_visa(data)
+            except Exception as exc:
+                app.after(0, lambda e=str(exc): app._log(f"Auto-detect error: {e}", "err"))
+            finally:
+                app.after(0, lambda: self._appliquer(data))
 
         threading.Thread(target=_run, daemon=True, name="thread-detect").start()
+
+    def _completer_avec_visa(self, data: dict) -> dict:
+        """Rend l'Auto-detect GPIB-aware : affecte les ressources VISA aux rôles multimètres libres."""
+        gp = self.app.gp
+        try:
+            # Seuls les vrais bus instruments (GPIB/USB) vont aux rôles multimètres ;
+            # ASRL* = un port série vu en VISA (ex. le thermo), à ne pas affecter ici.
+            ressources = [r for r in gp.lister_ressources_visa()
+                          if r.upper().startswith(("GPIB", "USB"))]
+        except Exception:
+            ressources = []
+        mapping = dict(data.get("mapping", {}))
+        detections = list(data.get("detections", []))
+        libres = [c for c in ("com1", "com2") if c not in mapping]
+        for adresse in ressources:
+            if not libres:
+                break
+            cible = libres.pop(0)
+            mapping[cible] = {"port": adresse}
+            detections.append({"instrument": adresse, "port": adresse})
+        data = dict(data)
+        data["mapping"] = mapping
+        data["detections"] = detections
+        return data
 
     def _appliquer(self, data: dict) -> None:
         self.rafraichir_ports()
@@ -70,6 +103,7 @@ class ConnexionController:
                 app._log(f"Could not close the previous Excel file: {exc}", "err")
             app.export_xls = None
             app.gestion_init.reinitialiser()
+            app._vue_reset_session()   # purge Monitor + Results de la session précédente
 
         operateur = app.var_operateur.get().strip()
         if len(operateur) < 2:
@@ -91,7 +125,8 @@ class ConnexionController:
         dossier_export = (os.path.join(get_desktop_path(), "IPQ_LFR_Simulation")
                           if simulation else ".")
         app.export_xls = ExportXLS(export_index, dossier=dossier_export,
-                                   simulation=simulation, operateur=operateur)
+                                   simulation=simulation, operateur=operateur,
+                                   nb_points=app.gestion_init.nb_points)
         if app.export_xls.ouvrir():
             app.journal.enregistrer(
                 EV_CONNEXION, f"indice={indice}  excel={app.export_xls.chemin_fichier}")

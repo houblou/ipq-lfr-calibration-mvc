@@ -26,37 +26,35 @@ except ImportError:
 
 from core.logger import creer_logger
 from core.paths import nom_fichier_xls
+from core.config import NB_POINTS
 
 logger = creer_logger("phase3")
 
-# Lignes de synthèse (index 1-based dans Excel)
-ROW_DATA_START = 2          # N[1] en ligne 2
-ROW_MOYENNE    = 32
-ROW_VARIANCE   = 33
-ROW_T_MOY      = 34
-ROW_HR_MOY     = 35
-ROW_DISTANCE   = 36
-ROW_DATE       = 37
-ROW_HEURE      = 38
-ROW_OPERATEUR  = 39
-
-SYNTHESE_LABELS = {
-    ROW_MOYENNE:   "MEAN",
-    ROW_VARIANCE:  "VARIANCE",
-    ROW_T_MOY:     "Mean T (°C)",
-    ROW_HR_MOY:    "Mean RH (%)",
-    ROW_DISTANCE:  "Distance (mm)",
-    ROW_DATE:      "Date",
-    ROW_HEURE:     "Start time",
-    ROW_OPERATEUR: "Operator",
-}
+# Le bloc de données occupe les lignes 2..(nb_points+1). Les lignes de synthèse
+# suivent (offset après nb_points). Pour 30 points : MOYENNE en 32, etc. Le tout
+# est calculé dynamiquement par ExportXLS (overlock — nombre de points variable).
+ROW_DATA_START = 2
+_OFFSETS_SYNTH = [   # (offset après nb_points, label)
+    (2, "MEAN"), (3, "VARIANCE"), (4, "Mean T (°C)"), (5, "Mean RH (%)"),
+    (6, "Distance (mm)"), (7, "Date"), (8, "Start time"), (9, "Operator"),
+]
+# Constantes par défaut (30 points) — conservées pour référence externe / tests.
+ROW_MOYENNE    = NB_POINTS + 2
+ROW_VARIANCE   = NB_POINTS + 3
+ROW_T_MOY      = NB_POINTS + 4
+ROW_HR_MOY     = NB_POINTS + 5
+ROW_DISTANCE   = NB_POINTS + 6
+ROW_DATE       = NB_POINTS + 7
+ROW_HEURE      = NB_POINTS + 8
+ROW_OPERATEUR  = NB_POINTS + 9
 
 
 class ExportXLS:
     """Gère la création et l'écriture du fichier Excel multi-séries."""
 
     def __init__(self, indice_notation: str, dossier: str = ".",
-                 simulation: bool = False, operateur: str = "") -> None:
+                 simulation: bool = False, operateur: str = "",
+                 nb_points: int = NB_POINTS) -> None:
         self.indice_notation = indice_notation
         self.dossier         = dossier
         self.chemin_fichier  = os.path.join(dossier, nom_fichier_xls(indice_notation))
@@ -65,6 +63,17 @@ class ExportXLS:
         self.serie_courante  = 0
         self.simulation      = simulation
         self.operateur       = operateur
+        # Mise en page calculée d'après le nombre de points (overlock).
+        self.nb_points       = int(nb_points)
+        self._labels_synth   = {self.nb_points + off: lbl for off, lbl in _OFFSETS_SYNTH}
+        self.row_moyenne     = self.nb_points + 2
+        self.row_variance    = self.nb_points + 3
+        self.row_t_moy       = self.nb_points + 4
+        self.row_hr_moy      = self.nb_points + 5
+        self.row_distance    = self.nb_points + 6
+        self.row_date        = self.nb_points + 7
+        self.row_heure       = self.nb_points + 8
+        self.row_operateur   = self.nb_points + 9
 
     def ouvrir(self) -> bool:
         """Crée le classeur Excel et prépare la feuille principale."""
@@ -78,7 +87,7 @@ class ExportXLS:
             self._ecrire_entete()
             if self.simulation:
                 warning = self.ws.cell(
-                    row=40, column=1,
+                    row=self.row_operateur + 1, column=1,
                     value="SIMULATION DATA — NOT VALID FOR METROLOGY",
                 )
                 warning.font = Font(bold=True, color="FFFFFF")
@@ -110,10 +119,12 @@ class ExportXLS:
         if self.ws is None:
             raise RuntimeError("Excel file is not open.")
 
-        if len(n) != 30:
-            raise ValueError(f"A series must contain exactly 30 points; received: {len(n)}.")
-        if any(valeur is None for valeur in n):
-            raise ValueError("The series contains at least one invalid measurement (None).")
+        if len(n) != self.nb_points:
+            raise ValueError(
+                f"A series must contain exactly {self.nb_points} points; received: {len(n)}.")
+        # Les points invalides (None) sont CONSERVES et marques 'INVALID' (jamais
+        # supprimes) ; ils sont deja exclus du calcul M/V en amont.
+        perdus = sum(1 for valeur in n if valeur is None)
 
         if not date:
             date = datetime.now().strftime("%d/%m/%Y")
@@ -125,24 +136,30 @@ class ExportXLS:
 
         # En-tête de colonne (label explicite ou numérotation automatique)
         entete = label if label else f"Series {self.serie_courante}"
+        if perdus:
+            entete += f"  ({perdus} invalid)"
         cell_h = self.ws.cell(row=1, column=col, value=entete)
         cell_h.font      = Font(bold=True, color="FFFFFF")
         cell_h.fill      = PatternFill("solid", fgColor="2E75B6")
         cell_h.alignment = Alignment(horizontal="center")
 
-        # Données N[i] (lignes 2 à 31)
+        # Données N[i] (lignes 2 à 31) — point perdu ecrit 'INVALID' + surligne
         for i, valeur in enumerate(n, start=1):
-            self.ws.cell(row=i + 1, column=col, value=valeur)
+            if valeur is None:
+                cell = self.ws.cell(row=i + 1, column=col, value="INVALID")
+                cell.fill = PatternFill("solid", fgColor="F8CBAD")
+            else:
+                self.ws.cell(row=i + 1, column=col, value=valeur)
 
         # Synthèse
         synthese = {
-            ROW_MOYENNE:  m,
-            ROW_VARIANCE: v,
-            ROW_T_MOY:    t_moy,
-            ROW_HR_MOY:   hr_moy,
-            ROW_DISTANCE: distance,
-            ROW_DATE:     date,
-            ROW_HEURE:    heure,
+            self.row_moyenne:  m,
+            self.row_variance: v,
+            self.row_t_moy:    t_moy,
+            self.row_hr_moy:   hr_moy,
+            self.row_distance: distance,
+            self.row_date:     date,
+            self.row_heure:    heure,
         }
         for row, valeur in synthese.items():
             cell = self.ws.cell(row=row, column=col, value=valeur)
@@ -168,20 +185,20 @@ class ExportXLS:
         # Ligne 1, col A
         self.ws.cell(row=1, column=1, value="i").font = bold
 
-        # Index 1..30
-        for i in range(1, 31):
+        # Index 1..nb_points
+        for i in range(1, self.nb_points + 1):
             self.ws.cell(row=i + 1, column=1, value=i)
 
         # Étiquettes de synthèse
         fill_synth = PatternFill("solid", fgColor="D9E1F2")
-        for row, label in SYNTHESE_LABELS.items():
+        for row, label in self._labels_synth.items():
             cell = self.ws.cell(row=row, column=1, value=label)
             cell.font = bold
             cell.fill = fill_synth
 
         # Opérateur — donnée de session, colonne B fixe (une seule valeur)
         if self.operateur:
-            cell_op = self.ws.cell(row=ROW_OPERATEUR, column=2, value=self.operateur)
+            cell_op = self.ws.cell(row=self.row_operateur, column=2, value=self.operateur)
             cell_op.fill = PatternFill("solid", fgColor="FFF3CD")
 
         # Largeur colonne A

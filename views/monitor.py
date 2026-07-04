@@ -20,7 +20,7 @@ except Exception:
     _MPL = False
 
 from core.logger import creer_logger
-from core.config import V_SEUIL_ALERTE
+from core.config import V_SEUIL_ALERTE, NB_POINTS
 from models import stats
 
 logger = creer_logger("phase6")
@@ -98,6 +98,9 @@ class _DetailChart(tk.Frame):
         self._titre = tk.Label(self, text="No run selected", font=_FB,
                                bg=_C["card"], fg=_C["primary"], anchor="w")
         self._titre.pack(fill="x", padx=12, pady=(10, 0))
+        self._relier = False                     # relier les points par un trait
+        self._data: Optional[_SerieData] = None  # série actuellement affichée
+        self._nb_points = NB_POINTS              # points par série (overlock)
         if _MPL:
             fig = Figure(figsize=(5, 3), dpi=90, facecolor=_C["card"])
             self._ax = fig.add_subplot(111)
@@ -112,6 +115,7 @@ class _DetailChart(tk.Frame):
             self._cv_tk.bind("<Configure>", lambda _e: self._dessiner_tk())
 
     def afficher(self, data: Optional[_SerieData]) -> None:
+        self._data = data
         if data is None:
             self._titre.configure(text="No run selected")
             return
@@ -119,8 +123,13 @@ class _DetailChart(tk.Frame):
         if _MPL:
             self._dessiner_mpl(data)
         else:
-            self._data = data
             self._dessiner_tk()
+
+    def set_relier(self, on: bool) -> None:
+        """Active/désactive le trait reliant les points, et redessine."""
+        self._relier = bool(on)
+        if self._data is not None:
+            self.afficher(self._data)
 
     def _style_ax(self) -> None:
         ax = self._ax
@@ -139,6 +148,8 @@ class _DetailChart(tk.Frame):
             xs = [i for i, _ in valides]
             ys = [v for _, v in valides]
             ax.scatter(xs, ys, color=data.couleur, s=24, zorder=3)
+            if self._relier and len(xs) > 1:
+                ax.plot(xs, ys, color=data.couleur, linewidth=1.0, alpha=0.5, zorder=2)
             res = stats.moyenne_sigma(ys)
             if res is not None:
                 m, sigma = res
@@ -151,7 +162,7 @@ class _DetailChart(tk.Frame):
                        edgecolor="white", linewidths=1.5, zorder=4)
             ax.legend(fontsize=8, facecolor=_C["card"],
                       labelcolor=_C["second"], edgecolor=_C["border"])
-        ax.set_xlim(0.5, 30.5)
+        ax.set_xlim(0.5, self._nb_points + 0.5)
         ax.set_xlabel("Sample index N[i]", color=_C["second"], fontsize=9)
         ax.set_ylabel("Value", color=_C["second"], fontsize=9)
         self._cv.draw_idle()
@@ -177,7 +188,7 @@ class _DetailChart(tk.Frame):
         hi += amp * 0.12
         dy = hi - lo
 
-        def px(i): return x0 + (i - 1) / 29 * (x1 - x0)
+        def px(i): return x0 + (i - 1) / max(self._nb_points - 1, 1) * (x1 - x0)
         def py(v): return y1 - (v - lo) / dy * (y1 - y0)
 
         for frac in range(5):
@@ -192,6 +203,11 @@ class _DetailChart(tk.Frame):
                 c.create_rectangle(x0, py(m + sigma), x1, py(m - sigma),
                                    fill="#efe7fb", outline="")
             c.create_line(x0, py(m), x1, py(m), fill=_C["violet"], dash=(5, 4))
+        if self._relier and len(valides) > 1:
+            coords = []
+            for xi, v in valides:
+                coords.extend([px(xi), py(v)])
+            c.create_line(*coords, fill=data.couleur, width=1)
         for xi, v in valides:
             x, y = px(xi), py(v)
             c.create_oval(x - 3, y - 3, x + 3, y + 3, fill=data.couleur, outline="")
@@ -211,6 +227,7 @@ class _ReadoutStrip(tk.Frame):
         kw.setdefault("bg", _C["card"])
         super().__init__(parent, highlightbackground=_C["border"],
                          highlightthickness=1, **kw)
+        self._nb_points = NB_POINTS
         self._vars: Dict[str, tk.StringVar] = {}
         for i, (titre, cle) in enumerate(self.CHAMPS):
             cell = tk.Frame(self, bg=_C["card"])
@@ -230,7 +247,7 @@ class _ReadoutStrip(tk.Frame):
                      m_prov: Optional[float], v_prov: Optional[float]) -> None:
         self._vars["com"].set(f"COM {com[-1]}" if com else "—")
         self._vars["serie"].set(serie)
-        self._vars["pt"].set(f"{i} / 30")
+        self._vars["pt"].set(f"{i} / {self._nb_points}")
         self._vars["t"].set(f"{t:.1f} °C")
         self._vars["hr"].set(f"{hr:.1f} %")
         self._vars["m"].set(f"{m_prov:.5f}" if m_prov is not None else "—")
@@ -244,6 +261,7 @@ class _VueNuage(tk.Frame):
                          highlightbackground=_C["border"], highlightthickness=1, **kw)
         self._series:   Dict[object, _SerieData] = {}
         self._visibles: Dict[object, tk.BooleanVar] = {}
+        self._nb_points = NB_POINTS
 
         if _MPL:
             fig = Figure(figsize=(5, 3.2), dpi=90, facecolor=_C["card"])
@@ -301,7 +319,7 @@ class _VueNuage(tk.Frame):
                 ax.axhspan(m_g - 2 * sigma, m_g + 2 * sigma,
                            alpha=0.08, color=_C["violet"])
         # Auto-échelle Y : matplotlib ajuste aux données visibles (Δ min/max + marge).
-        ax.set_xlim(0.5, 30.5)
+        ax.set_xlim(0.5, self._nb_points + 0.5)
         ax.set_xlabel("Sample index N[i]", color=_C["second"], fontsize=9)
         ax.set_ylabel("Value", color=_C["second"], fontsize=9)
         if 0 < len(all_vals) and len(self._series) <= 12:
@@ -330,6 +348,8 @@ class MonitorTab(tk.Frame):
         self._selected: Optional[object] = None
         self._follow_live = True
         self._nb_series = 0
+        self._nb_points = NB_POINTS
+        self._relier = False
         self._com_actif = tk.StringVar(value="com1")
         self._construire()
 
@@ -395,7 +415,26 @@ class MonitorTab(tk.Frame):
         )
         self._btn_toggle.pack(side="right", padx=14, pady=6)
 
+        self._btn_relier = tk.Button(
+            hdr, text="╱  Connect", font=_FS,
+            bg=_C["card"], fg=_C["second"],
+            activebackground=_C["hover"], activeforeground=_C["primary"],
+            relief="flat", bd=0, padx=12, pady=5,
+            highlightbackground=_C["border"], highlightthickness=1,
+            cursor="hand2", command=self._toggle_relier,
+        )
+        self._btn_relier.pack(side="right", padx=(0, 4), pady=6)
+
     # ── Navigation ───────────────────────────────────────────────────────────
+    def _toggle_relier(self) -> None:
+        """Relie/délie les points du graphe détaillé."""
+        self._relier = not self._relier
+        self._chart.set_relier(self._relier)
+        if self._relier:
+            self._btn_relier.configure(bg=_C["violet"], fg="#ffffff", highlightthickness=0)
+        else:
+            self._btn_relier.configure(bg=_C["card"], fg=_C["second"], highlightthickness=1)
+
     def _toggle_vue(self) -> None:
         if self._nuage.winfo_ismapped():
             self._nuage.pack_forget()
@@ -464,6 +503,13 @@ class MonitorTab(tk.Frame):
     def set_nb_series(self, nb: int) -> None:
         self._nb_series = nb
 
+    def set_nb_points(self, nb: int) -> None:
+        """Overlock : propage le nombre de points aux sous-vues (échelle X, readout)."""
+        self._nb_points = nb
+        self._chart._nb_points = nb
+        self._readout._nb_points = nb
+        self._nuage._nb_points = nb
+
     def on_init_point(self, cible: str, i: int,
                       val: Optional[float], t: float, hr: float) -> None:
         sid  = f"init_{cible}"
@@ -512,6 +558,31 @@ class MonitorTab(tk.Frame):
             data.complete = True
             self._maj_ligne(x)
             if x == self._selected:
+                self._chart.afficher(data)
+            self._nuage.redessiner()
+
+    def on_final_point(self, cible: str, i: int,
+                       val: Optional[float], t: float, hr: float) -> None:
+        sid  = f"final_{cible}"
+        data = self._get_or_create(sid, f"Final {cible.upper()}", _C["amber"])
+        if i == 1:
+            data.reinit()
+            self._follow_live = True
+        data.ajouter(val)
+        self._maj_ligne(sid)
+        self._suivre(sid)
+        self._readout.update_stats(cible, f"Final {cible.upper()}", i, t, hr,
+                                   data.m_provisoire(), None)
+
+    def on_final_complete(self, cible: str, m: float, v: float) -> None:
+        sid  = f"final_{cible}"
+        data = self._series.get(sid)
+        if data:
+            data.m = m
+            data.v = v
+            data.complete = True
+            self._maj_ligne(sid)
+            if sid == self._selected:
                 self._chart.afficher(data)
             self._nuage.redessiner()
 

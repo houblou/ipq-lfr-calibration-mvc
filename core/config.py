@@ -10,6 +10,8 @@ TIMEOUT_PORT_DEFAULT = 2.0
 POLL_INTERVAL_S       = 0.5
 ACQ_INTERVAL_S        = 0.9
 NB_POINTS             = 30
+NB_POINTS_MIN         = 2      # overlock : plancher (variance exige >= 2 points)
+NB_POINTS_MAX         = 50     # overlock : plafond materiel
 ATTENTE_INTER_SERIE_S = 60
 BIP_FREQ_START        = 700
 BIP_FREQ_END          = 1400

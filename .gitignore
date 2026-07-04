@@ -19,3 +19,6 @@ env/
 .vscode/
 .idea/
 *.swp
+
+# Outillage local (Claude Code) — ne pas versionner
+.claude/

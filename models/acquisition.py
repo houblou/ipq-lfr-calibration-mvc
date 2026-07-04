@@ -1,6 +1,6 @@
 
 import time
-from typing import Callable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from core.logger import creer_logger
 from core.config import ACQ_INTERVAL_S, NB_POINTS
@@ -12,8 +12,9 @@ logger = creer_logger("phase2")
 class Acquisition:
     """Gère une série de 30 acquisitions et le calcul M / V / T_moy / HR_moy."""
 
-    def __init__(self, gestion_ports) -> None:
+    def __init__(self, gestion_ports, nb_points: int = NB_POINTS) -> None:
         self.gp = gestion_ports
+        self.nb_points = int(nb_points)   # points par série (30 par défaut ; overlock)
         self.n:       List[Optional[float]] = []
         self.t_vals:  List[float] = []
         self.hr_vals: List[float] = []
@@ -21,6 +22,8 @@ class Acquisition:
         self.variance: Optional[float] = None
         self.t_moy:    Optional[float] = None
         self.hr_moy:   Optional[float] = None
+        self.points_perdus: int = 0    # mesures COM non lues (None) — gardées, exclues du M/V
+        self.thermo_perdus: int = 0    # glitches thermo ayant nécessité un réessai (jamais recopiés)
 
         # ── Contrôle d'arrêt ───────────────────────────────────────────────
         self._arret  = False   # demande d'arrêt (positionné depuis un autre thread)
@@ -48,8 +51,8 @@ class Acquisition:
 
     def _boucle(self, contexte: str, lire_fn, callback_point, callback_fin):
         self._reset_buffers()
-        logger.info("Début %s — %d points, %.0f ms", contexte, NB_POINTS, ACQ_INTERVAL_S * 1000)
-        for i in range(1, NB_POINTS + 1):
+        logger.info("Début %s — %d points, %.0f ms", contexte, self.nb_points, ACQ_INTERVAL_S * 1000)
+        for i in range(1, self.nb_points + 1):
             if self._arret:
                 break
             valeurs = lire_fn()
@@ -57,23 +60,32 @@ class Acquisition:
             # Temperature read BETWEEN measurements to avoid simultaneous GPIB access
             if not self._sleep_interruptible(ACQ_INTERVAL_S / 2):
                 break
-            # B : un glitch thermo ponctuel (trame RUSKA muette, etc.) ne doit pas
-            # tuer la série. On réutilise la dernière valeur connue ; mais si la
-            # toute première lecture échoue, on laisse remonter pour échouer proprement.
+            # Invariant : on ne FABRIQUE jamais une valeur mesurée. Sur échec thermo,
+            # on RELANCE la lecture (un réessai) ; si le réessai échoue aussi, la série
+            # est ABANDONNÉE proprement (à relancer par l'opérateur) — on ne recopie
+            # JAMAIS la valeur précédente (ce serait une donnée inventée).
             try:
                 t, hr = self.gp.lire_thermo()
-            except Exception as exc:
-                if not self.t_vals:
-                    raise
-                t, hr = self.t_vals[-1], self.hr_vals[-1]
-                logger.warning("%s: thermo read failed at point %d, reusing last value: %s",
-                               contexte, i, exc)
+            except Exception:
+                if self._arret:
+                    break
+                self.thermo_perdus += 1
+                time.sleep(0.1)
+                try:
+                    t, hr = self.gp.lire_thermo()   # réessai (relance de la lecture)
+                except Exception as exc:
+                    logger.error("%s: thermo read failed at point %d after retry — "
+                                 "series aborted (relaunch): %s", contexte, i, exc)
+                    raise RuntimeError(
+                        f"Thermo/hygro read failed at point {i}; series aborted "
+                        "(relaunch required — a measured value is never fabricated)."
+                    ) from exc
             self.t_vals.append(t)
             self.hr_vals.append(hr)
             logger.debug("%s N[%d] = %s  T=%.1f HR=%.1f", contexte, i, valeurs, t, hr)
             if callback_point:
                 callback_point(i, *valeurs, t, hr)
-            if i < NB_POINTS and not self._sleep_interruptible(ACQ_INTERVAL_S / 2):
+            if i < self.nb_points and not self._sleep_interruptible(ACQ_INTERVAL_S / 2):
                 break
         return self._finaliser(callback_fin, contexte)
 
@@ -83,14 +95,27 @@ class Acquisition:
         self.n       = []
         self.t_vals  = []
         self.hr_vals = []
+        self.points_perdus = 0
+        self.thermo_perdus = 0
         self._arret  = False
         self.arrete  = False
 
     def _finaliser(self, callback_fin, contexte: str):
         """Calcule les stats et déclenche callback_fin, sauf si arrêt demandé."""
+        # Invariant : 0 point VALIDE (instrument totalement muet) → on ne fabrique pas
+        # une moyenne (0.0 serait indistinguable d'une vraie moyenne nulle). La série
+        # est rejetée pour être relancée. (Une série INTERROMPUE garde son droit au
+        # repli : l'opérateur a coupé volontairement.)
+        if not self._arret and not any(x is not None for x in self.n):
+            logger.error("%s: aucun point valide — série rejetée (M/V jamais fabriqués).", contexte)
+            raise RuntimeError(
+                f"{contexte}: no valid measurement point; series rejected "
+                "(relaunch required — M/V are never fabricated)."
+            )
         self.moyenne, self.variance = self._calculer_stats(self.n)
         self.t_moy  = (sum(self.t_vals)  / len(self.t_vals))  if self.t_vals  else 0.0
         self.hr_moy = (sum(self.hr_vals) / len(self.hr_vals)) if self.hr_vals else 0.0
+        self.points_perdus = sum(1 for x in self.n if x is None)
 
         if self._arret:
             self.arrete = True

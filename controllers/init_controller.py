@@ -20,7 +20,7 @@ class InitController:
             return
         app._acq_en_cours = True
         app._vue_init_demarrage(cible)
-        app._acq_courante = acq = Acquisition(app.gp)
+        app._acq_courante = acq = Acquisition(app.gp, app.gestion_init.nb_points)
 
         def on_pt(i, valeur, t, hr):
             app.after(0, lambda i=i, v=valeur, t=t, hr=hr: app._maj_init_pt(cible, i, v, t, hr))

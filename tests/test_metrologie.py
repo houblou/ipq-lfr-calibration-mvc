@@ -102,11 +102,28 @@ class TestExportExcel(unittest.TestCase):
         self.assertEqual(feuille.cell(row=ROW_DATE, column=2).value, "22/06/2026")
         self.assertEqual(feuille.cell(row=ROW_HEURE, column=2).value, "10:15:00")
 
-    def test_refuse_une_serie_incomplete(self):
+    def test_refuse_une_serie_de_mauvaise_longueur(self):
+        # Une longueur incorrecte reste rejetee.
         with self.assertRaises(ValueError):
             self.export.ajouter_serie([1.0] * 29, 1.0, 0.0)
-        with self.assertRaises(ValueError):
-            self.export.ajouter_serie([1.0] * 29 + [None], 1.0, 0.0)
+
+    def test_point_invalide_conserve_et_marque(self):
+        # Un point None est CONSERVE et marque 'INVALID' (jamais supprime),
+        # et l'en-tete de colonne signale le nombre d'invalides.
+        self.export.ajouter_serie([1.0] * 29 + [None], 1.0, 0.0, label="S")
+        feuille = load_workbook(self.export.chemin_fichier, data_only=True).active
+        self.assertEqual(feuille.cell(row=31, column=2).value, "INVALID")
+        self.assertIn("invalid", str(feuille.cell(row=1, column=2).value).lower())
+
+    def test_overlock_layout_dynamique(self):
+        # Overlock : un nombre de points != 30 décale la synthèse en conséquence.
+        export = ExportXLS("OVL", dossier=self.tempdir.name, nb_points=10)
+        self.assertTrue(export.ouvrir())
+        export.ajouter_serie([float(i) for i in range(1, 11)], 5.5, 8.25, label="S")
+        feuille = load_workbook(export.chemin_fichier, data_only=True).active
+        self.assertEqual(export.row_moyenne, 12)                       # 10 pts -> MOYENNE en 12
+        self.assertEqual(feuille.cell(row=11, column=2).value, 10.0)   # dernier point en 11
+        self.assertEqual(feuille.cell(row=export.row_moyenne, column=2).value, 5.5)
 
 
 class _AcquisitionFactice:

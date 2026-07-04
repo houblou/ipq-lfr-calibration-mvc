@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Callable, List, Optional
 
 from core.logger import creer_logger
+from core.config import NB_POINTS, NB_POINTS_MIN, NB_POINTS_MAX
 
 logger = creer_logger("phase5")
 
@@ -18,6 +19,7 @@ class GestionInitialisation:
     def __init__(self, gestion_ports) -> None:
         self.gp           = gestion_ports
         self.nb_series:    int   = 5
+        self.nb_points:    int   = NB_POINTS   # points par série (overlock admin)
         self.distance_mm:  float = 0.0
 
         # ── État initialisation ───────────────────────────────────────────
@@ -144,6 +146,13 @@ class GestionInitialisation:
             raise ValueError("X doit être >= 1.")
         self.nb_series = x
         logger.info("X = %d séries", x)
+
+    def definir_nb_points(self, nb: int) -> int:
+        """Overlock : fixe le nombre de points par série, borné [MIN, MAX].
+        Retourne la valeur réellement appliquée (après encadrement)."""
+        self.nb_points = max(NB_POINTS_MIN, min(int(nb), NB_POINTS_MAX))
+        logger.info("Nombre de points par série = %d (overlock)", self.nb_points)
+        return self.nb_points
 
     def definir_distance(self, distance_mm: float) -> None:
         if distance_mm < 0:

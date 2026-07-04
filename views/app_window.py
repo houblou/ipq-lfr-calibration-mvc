@@ -8,7 +8,7 @@ from typing import Optional
 
 from core.logger import creer_logger
 from core.paths import horodatage_lisible, get_desktop_path
-from core.config import ATTENTE_INTER_SERIE_S
+from core.config import ATTENTE_INTER_SERIE_S, NB_POINTS_MIN, NB_POINTS_MAX
 from models.ports import GestionPorts
 from models.acquisition import Acquisition
 from models.export_xls import ExportXLS
@@ -72,6 +72,7 @@ class ApplicationIPQ(tk.Tk):
         self._init_sequentielle = False
         self._acq_courante:    Optional[Acquisition]       = None
         self._boucle_courante: Optional[BoucleCalibration] = None
+        self._arret_finale     = False   # intention d'arrêt de la mesure finale (fenêtre de course)
         self._vue_active    = None
         self._nav_btns      = {}
         self._detect_scanning = False
@@ -413,6 +414,7 @@ class ApplicationIPQ(tk.Tk):
 
         self._port_vars   = {}
         self._port_labels = {}
+        self._port_combos = {}   # les 3 menus de rôle (à ne pas confondre avec la Source thermo)
         for nom, label in [("com1", "Multimeter 1"),
                            ("com2", "Multimeter 2"),
                            ("thermo1", "Thermohygrometer")]:
@@ -430,6 +432,7 @@ class ApplicationIPQ(tk.Tk):
             cb = ttk.Combobox(row, textvariable=var, width=18, state="readonly",
                               font=FONT_SMALL)
             cb.pack(side="right", padx=(0, 8))
+            self._port_combos[nom] = cb
 
             # Connexion du port laissée disponible (bus auto : COMx série, GPIB VISA).
             btn(row, "Connect",
@@ -680,6 +683,10 @@ class ApplicationIPQ(tk.Tk):
                                     state="disabled")
         self.btn_cal_stop.pack(side="left")
 
+        self.btn_final = btn_noir(btn_cal_row, "⧉  Final measurement",
+                                  command=self._mesure_finale, padx=14, pady=9)
+        self.btn_final.pack(side="left", padx=(8, 0))
+
         return f
 
     # ── Vue : Résultats ───────────────────────────────────────────────────────
@@ -700,6 +707,7 @@ class ApplicationIPQ(tk.Tk):
             self.tree.column(col, width=w, anchor="center", minwidth=70)
         self.tree.column("Series", anchor="w")
         self.tree.tag_configure("init", foreground=C["txt_active"])
+        self.tree.tag_configure("final", foreground=C["txt_amber"])
 
         vsb = ttk.Scrollbar(table_wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -747,18 +755,6 @@ class ApplicationIPQ(tk.Tk):
     def _rafraichir_ports(self) -> None:
         self._ctrl_connexion.rafraichir_ports()
 
-    def _iter_comboboxes(self):
-        """Parcourt tous les Combobox dans frame_content."""
-        return self._find_widgets(self.frame_content, ttk.Combobox)
-
-    def _find_widgets(self, parent, wtype):
-        result = []
-        for child in parent.winfo_children():
-            if isinstance(child, wtype):
-                result.append(child)
-            result.extend(self._find_widgets(child, wtype))
-        return result
-
     def _connecter_port(self, cible: str) -> None:
         self._ctrl_connexion.connecter(cible)
 
@@ -789,7 +785,7 @@ class ApplicationIPQ(tk.Tk):
 
     def _vue_ports_disponibles(self, ports) -> None:
         liste = [""] + ports
-        for widget in self._iter_comboboxes():
+        for widget in self._port_combos.values():   # seulement les 3 rôles, pas la Source thermo
             widget["values"] = liste
         self._log(f"Detected instruments: {ports or 'none'}")
 
@@ -875,7 +871,7 @@ class ApplicationIPQ(tk.Tk):
     def _maj_init_pt(self, cible: str, i: int, valeur, t: float, hr: float) -> None:
         n = cible[-1]
         getattr(self, f"prog_init{n}")["value"] = i
-        self.progress_statut.configure(maximum=30)   # barre du status bar (30 points)
+        self.progress_statut.configure(maximum=self.gestion_init.nb_points)
         self.progress_statut["value"] = i
         self._monitor.on_init_point(cible, i, valeur, t, hr)
         self.var_t.set(f"T: {t:.1f} °C")
@@ -885,7 +881,10 @@ class ApplicationIPQ(tk.Tk):
 
     def _vue_init_demarrage(self, cible: str) -> None:
         n = cible[-1]
+        nbp = self.gestion_init.nb_points
+        getattr(self, f"prog_init{n}").configure(maximum=nbp)
         getattr(self, f"prog_init{n}")["value"] = 0
+        self._monitor.set_nb_points(nbp)
         getattr(self, f"lbl_init{n}_statut").configure(text="Running…", fg=C["txt_amber"])
         self._badge(f"● COM{n} initialization running", C["txt_amber"], "#3a2a00")
 
@@ -904,7 +903,7 @@ class ApplicationIPQ(tk.Tk):
         getattr(self, f"var_t_init{n}").set(f"{t_moy:.2f} °C")
         getattr(self, f"var_hr_init{n}").set(f"{hr_moy:.2f} %")
         getattr(self, f"lbl_init{n}_statut").configure(text="Completed", fg=C["txt_green"])
-        getattr(self, f"prog_init{n}")["value"] = 30
+        getattr(self, f"prog_init{n}")["value"] = self.gestion_init.nb_points
         self._monitor.on_init_complete(cible, m, v)
         if hasattr(self, "tree"):
             iid = f"init_{cible}"
@@ -952,6 +951,9 @@ class ApplicationIPQ(tk.Tk):
     def _arreter_calibration(self) -> None:
         self._ctrl_mesure.arreter()
 
+    def _mesure_finale(self) -> None:
+        self._ctrl_mesure.mesure_finale()
+
     def _lire_nb_series(self) -> Optional[int]:
         try:
             x = int(self.var_nb_series.get())
@@ -978,6 +980,7 @@ class ApplicationIPQ(tk.Tk):
         self.progress_statut["value"] = 0
         self._monitor.set_com_actif(cible)
         self._monitor.set_nb_series(x)
+        self._monitor.set_nb_points(self.gestion_init.nb_points)
         self.btn_cal_start.configure(state="disabled")
         self.btn_cal_stop.configure(state="normal")
         self._badge(f"● Measurement — 0 / {x}", C["txt_amber"], "#3a2a00")
@@ -986,13 +989,16 @@ class ApplicationIPQ(tk.Tk):
         self._badge(f"● Waiting {restant}s — next series {prochaine}/{x}",
                     C["txt_blue"], "#0a2a3a")
 
-    def _vue_mesure_serie(self, x, nb, m, v, t_moy, hr_moy, dist) -> None:
+    def _vue_mesure_serie(self, x, nb, m, v, t_moy, hr_moy, dist, perdus=0) -> None:
         self.lbl_serie_status.configure(text=f"Series {x} / {nb}")
         self.progress_cal["value"] = x
         self.progress_statut["value"] = x   # barre du status bar
         self._badge(f"● Measurement — {x} / {nb}", C["txt_amber"], "#3a2a00")
+        libelle = f"Series {x}" + (f"  ⚠ {perdus} invalid" if perdus else "")
         self.tree.insert("", "end", values=(
-            f"Series {x}", f"{dist:.1f}", f"{m:.6f}", f"{v:.6f}", f"{t_moy:.2f}", f"{hr_moy:.2f}"))
+            libelle, f"{dist:.1f}", f"{m:.6f}", f"{v:.6f}", f"{t_moy:.2f}", f"{hr_moy:.2f}"))
+        if perdus:
+            self._log(f"⚠ Series {x}: {perdus} point(s) perdu(s) — conservés (INVALID), exclus du M/V.", "err")
         self._monitor.on_serie_complete(x, m, v)
         self._log(f"Series {x}/{nb} — M={m:.6f}  distance={dist:.1f} mm", "ok")
 
@@ -1020,6 +1026,55 @@ class ApplicationIPQ(tk.Tk):
         self._badge("● Completed", C["txt_green"], "#1a3a1a")
         self._statut(f"Measurement completed — {nb} series.")
         self._log(f"Measurement completed — {nb} series.", "ok")
+
+    # ── Vue Mesure finale (COM1 + COM2, comme l'init) ─────────────────────────
+
+    def _vue_mesure_finale_demarrage(self) -> None:
+        nbp = self.gestion_init.nb_points
+        self._monitor.set_nb_points(nbp)
+        self.progress_statut.configure(maximum=nbp * 2)   # com1 puis com2
+        self.progress_statut["value"] = 0
+        self.btn_cal_start.configure(state="disabled")
+        self.btn_final.configure(state="disabled")
+        self.btn_cal_stop.configure(state="normal")   # la mesure finale est interruptible
+        self._badge("● Final measurement — COM1 + COM2", C["txt_amber"], "#3a2a00")
+        self._log("Final measurement started (COM1 then COM2).", "info")
+
+    def _vue_mesure_finale_point(self, avancement: int) -> None:
+        self.progress_statut["value"] = avancement
+
+    def _vue_mesure_finale_serie(self, cible, m, v, t_moy, hr_moy, perdus, dist) -> None:
+        n = cible[-1]
+        libelle = f"Final COM{n}" + (f"  ⚠ {perdus} invalid" if perdus else "")
+        iid = f"final_{cible}"
+        valeurs = (libelle, f"{dist:.1f}", f"{m:.6f}", f"{v:.6f}",
+                   f"{t_moy:.2f}", f"{hr_moy:.2f}")
+        if self.tree.exists(iid):
+            self.tree.item(iid, values=valeurs)
+        else:
+            self.tree.insert("", "end", iid=iid, values=valeurs, tags=("final",))
+        self._monitor.on_final_complete(cible, m, v)
+        if perdus:
+            self._log(f"⚠ Final COM{n}: {perdus} point(s) perdu(s) — conservés (INVALID).", "err")
+        self._log(f"Final COM{n} — M={m:.6f}  V={v:.6f}", "ok")
+
+    def _vue_mesure_finale_erreur(self, erreur: str) -> None:
+        self._badge("● Error", C["txt_red"], C["bg_danger"])
+        self._log(f"Final measurement failed: {erreur}", "err")
+        messagebox.showerror("Final measurement error", erreur)
+
+    def _vue_mesure_finale_termine(self, interrompu: bool, erreur=None) -> None:
+        self.btn_cal_start.configure(state="normal")
+        self.btn_final.configure(state="normal")
+        self.btn_cal_stop.configure(state="disabled")
+        if erreur:
+            return   # badge + message d'erreur déjà posés par _vue_mesure_finale_erreur
+        if interrompu:
+            self._badge("● Interrupted", C["txt_red"], C["bg_danger"])
+            self._log("Final measurement interrupted.", "err")
+        else:
+            self._badge("● Final measurement completed", C["txt_green"], "#1a3a1a")
+            self._statut("Final measurement completed — Final COM1 / COM2 exported.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Helpers
@@ -1129,6 +1184,46 @@ class ApplicationIPQ(tk.Tk):
         os.makedirs(dossier, exist_ok=True)
         subprocess.Popen(f'explorer "{dossier}"')
 
+    def _appliquer_overlock(self, _event=None) -> None:
+        """Overlock : applique le nombre de points par série (borné [MIN, MAX])."""
+        if self._acq_en_cours:
+            self.afficher_avertissement("Operation in progress",
+                                        "Cannot change the point count during an acquisition.")
+            return
+        try:
+            nb = int(self.var_nb_points.get())
+        except (tk.TclError, ValueError):
+            self.afficher_avertissement("Invalid value", "Enter a whole number of points.")
+            return
+        # Une session Excel fige sa mise en page sur l'ancien nb de points : on la
+        # RÉINITIALISE pour forcer une recréation cohérente (sinon ValueError à chaque
+        # mesure). L'init déjà acquise (faite avec l'ancien compte) est aussi remise à zéro.
+        if self.export_xls is not None:
+            if not self.demander_confirmation(
+                "Session will be reset",
+                "Changing the point count resets the current Excel session and the\n"
+                "initialization (they use the old point count).\n"
+                "You will recreate the session on the Connection page.\n\nContinue?"):
+                return
+            try:
+                self.export_xls.fermer()
+            except Exception as exc:
+                self._log(f"Could not close the previous Excel file: {exc}", "err")
+            self.export_xls = None
+            self.gestion_init.reinitialiser()
+            self._vue_reset_session()
+        applied = self.gestion_init.definir_nb_points(nb)
+        self.var_nb_points.set(applied)
+        self._log(f"Overlock: {applied} points per series.", "ok")
+        self._statut(f"Overlock set — {applied} points/series. Create a new session on Connection.")
+
+    def _vue_reset_session(self) -> None:
+        """Purge l'affichage (Monitor + tableau Results) lors d'un changement de session."""
+        self._monitor.reset()
+        if hasattr(self, "tree"):
+            for iid in self.tree.get_children(""):
+                self.tree.delete(iid)
+
     # ── Vue : Administration ──────────────────────────────────────────────────
 
     def _vue_admin(self) -> tk.Frame:
@@ -1187,6 +1282,27 @@ class ApplicationIPQ(tk.Tk):
         b_open_sim.pack(side="left", padx=(8, 0))
         self._actualiser_btn_sim()
 
+        # ── Overlock — points par série ────────────────────────────────────
+        c_ovl = card(inner)
+        c_ovl.pack(fill="x", padx=20, pady=(0, 10))
+        lbl(c_ovl, "Overlock — points per series", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
+            anchor="w", padx=14, pady=(12, 4))
+        lbl(c_ovl,
+            f"Override the fixed 30 points (bounded {NB_POINTS_MIN}–{NB_POINTS_MAX}).\n"
+            "Set BEFORE creating the Excel session — it fixes the sheet layout.",
+            FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(anchor="w", padx=14, pady=(0, 8))
+        row_ovl = tk.Frame(c_ovl, bg=C["bg_card"])
+        row_ovl.pack(anchor="w", padx=14, pady=(0, 12))
+        lbl(row_ovl, "Points:", FONT, C["txt_secondary"], C["bg_card"]).pack(side="left", padx=(0, 8))
+        self.var_nb_points = tk.IntVar(value=self.gestion_init.nb_points)
+        tk.Spinbox(row_ovl, from_=NB_POINTS_MIN, to=NB_POINTS_MAX,
+                   textvariable=self.var_nb_points, width=6, font=FONT,
+                   bg=C["bg_input"], fg=C["txt_primary"],
+                   buttonbackground=C["bg_hover"], relief="flat", bd=1,
+                   highlightbackground=C["border_light"], highlightthickness=1).pack(
+            side="left", padx=(0, 8))
+        btn(row_ovl, "Apply", command=self._appliquer_overlock, padx=12, pady=6).pack(side="left")
+
         # ── Audit log ──────────────────────────────────────────────────────
         c_aud = card(inner)
         c_aud.pack(fill="x", padx=20, pady=(0, 10))
@@ -1238,9 +1354,10 @@ class ApplicationIPQ(tk.Tk):
 
     def _get_distance(self) -> float:
         try:
-            return float(self.var_distance.get())
-        except (ValueError, AttributeError):
+            valeur = float(self.var_distance.get().replace(",", "."))
+        except (ValueError, AttributeError, tk.TclError):
             return 0.0
+        return max(valeur, 0.0)   # une distance négative n'a pas de sens -> bornée à 0
 
     def _verifier_ports_requis(self, *cibles: str) -> bool:
         """Bloque une mesure si un instrument requis n'est pas réellement connecté."""
@@ -1313,8 +1430,13 @@ class ApplicationIPQ(tk.Tk):
                 return
             if self._boucle_courante is not None:
                 self._boucle_courante.demander_arret()
-            elif self._acq_courante is not None:
-                self._acq_courante.demander_arret()
+            else:
+                # Mesure finale (pas de BoucleCalibration) : poser l'intention d'arrêt
+                # ferme AUSSI la fenêtre de course au démarrage (_run la teste en tête
+                # de boucle) ; on arrête l'acquisition si elle est déjà créée.
+                self._arret_finale = True
+                if self._acq_courante is not None:
+                    self._acq_courante.demander_arret()
             self.after(100, self._attendre_avant_quitter)
             return
         self._finaliser_quitter()

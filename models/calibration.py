@@ -164,13 +164,15 @@ class BoucleCalibration:
 
                 self.fn_export(n, m, v, t_moy, hr_moy, distance, date, heure, label=f"Series {x}")
 
+                perdus = self.acquisition.points_perdus
                 self.resultats.append({
                     "serie": x, "N": n, "M": m, "V": v,
                     "T_moy": t_moy, "HR_moy": hr_moy, "distance": distance,
+                    "perdus": perdus,
                 })
 
                 if self.callback_serie:
-                    self.callback_serie(x, m, v, t_moy, hr_moy)
+                    self.callback_serie(x, m, v, t_moy, hr_moy, perdus)
 
                 logger.info(
                     "Série %d — M=%.6f V=%.6f T_moy=%.2f HR_moy=%.2f dist=%.1f",

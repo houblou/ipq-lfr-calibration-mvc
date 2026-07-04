@@ -144,7 +144,8 @@ def _interroger(ser: "serial.Serial", sonde: dict) -> Optional[str]:
 
 
 def tester_combinaison(port: str, baud: int, parite, stopbits,
-                       rtscts: bool, timeout: float) -> Optional[Dict]:
+                       rtscts: bool, timeout: float,
+                       deadline: Optional[float] = None) -> Optional[Dict]:
     """
     Ouvre le port avec ces paramètres et teste tous les profils.
     Retourne le dict d'identification si un instrument répond, sinon None.
@@ -170,6 +171,8 @@ def tester_combinaison(port: str, baud: int, parite, stopbits,
         vivant = False
         for profil in PROFILS:
             for sonde in profil["sondes"]:
+                if deadline is not None and time.time() >= deadline:
+                    return None   # budget temps dépassé : on coupe entre deux sondes
                 reponse = _interroger(ser, sonde)
                 if reponse:
                     vivant = True
@@ -197,17 +200,22 @@ def tester_combinaison(port: str, baud: int, parite, stopbits,
 
 # ── Scan complet d'un port ────────────────────────────────────────────────────
 
-def scanner_port(port: str, timeout: float = TIMEOUT_DEFAUT) -> Optional[Dict]:
-    """Balaye toutes les combinaisons sur un port. Renvoie le 1er succès."""
+def scanner_port(port: str, timeout: float = TIMEOUT_DEFAUT,
+                 deadline: Optional[float] = None) -> Optional[Dict]:
+    """Balaye toutes les combinaisons sur un port. Renvoie le 1er succès.
+    Si `deadline` (instant absolu time.time()) est fourni et dépassé, arrête net."""
     total = len(BAUDRATES) * len(PARITES) * len(STOPBITS) * len(RTSCTS)
     n = 0
     for baud in BAUDRATES:
         for (p_nom, p_val) in PARITES:
             for (s_nom, s_val) in STOPBITS:
                 for rtscts in RTSCTS:
+                    if deadline is not None and time.time() >= deadline:
+                        _effacer_ligne()
+                        return None
                     n += 1
                     _afficher_progression(port, n, total, baud, p_nom, s_nom, rtscts)
-                    res = tester_combinaison(port, baud, p_val, s_val, rtscts, timeout)
+                    res = tester_combinaison(port, baud, p_val, s_val, rtscts, timeout, deadline)
                     if res is not None:
                         res.update({
                             "port":     port,
@@ -340,12 +348,14 @@ def exporter_json(resultats: List[Dict], non_reconnus: List[Dict],
 # ── API programmatique (utilisée par l'UI) ───────────────────────────────────
 
 def detecter(timeout: float = TIMEOUT_DEFAUT,
-             ports: Optional[List[str]] = None) -> Dict:
+             ports: Optional[List[str]] = None,
+             deadline: Optional[float] = None) -> Dict:
     """
     Scan programmatique réutilisable (ex. depuis l'interface graphique).
     Retourne un dict identique au JSON exporté :
         {date, detections, non_reconnus, config, mapping}
     Ne lève jamais ; si pyserial est absent, renvoie un résultat vide.
+    `deadline` (instant absolu time.time()) borne la durée totale du scan.
     """
     if not PYSERIAL_OK:
         return {"date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -358,8 +368,11 @@ def detecter(timeout: float = TIMEOUT_DEFAUT,
     resultats: List[Dict] = []
     non_reconnus: List[Dict] = []
     for port in ports:
+        if deadline is not None and time.time() >= deadline:
+            non_reconnus.append({"port": port, "raison": "Scan interrompu (budget temps dépassé)"})
+            continue
         try:
-            res = scanner_port(port, timeout=timeout)
+            res = scanner_port(port, timeout=timeout, deadline=deadline)
         except Exception as exc:
             non_reconnus.append({"port": port, "raison": f"Erreur de scan : {exc}"})
             continue

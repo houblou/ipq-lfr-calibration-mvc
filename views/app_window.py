@@ -1,14 +1,13 @@
 
 import os
-import threading
 import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, simpledialog, ttk
 from typing import Optional
 
 from core.logger import creer_logger
-from core.paths import horodatage_lisible, get_desktop_path
-from core.config import ATTENTE_INTER_SERIE_S, NB_POINTS_MIN, NB_POINTS_MAX
+from core.paths import get_desktop_path
+from core.config import ATTENTE_INTER_SERIE_S, NB_POINTS_MIN, NB_POINTS_MAX, label_multimetre
 from models.ports import GestionPorts
 from models.acquisition import Acquisition
 from models.export_xls import ExportXLS
@@ -16,29 +15,23 @@ from models.calibration import BoucleCalibration
 from models.initialisation import GestionInitialisation
 from views.monitor import MonitorTab
 from models.thermo import ThermoService
+from models.live_mesure import LiveMesureService
 from controllers.thermo_controller import ThermoController
+from controllers.live_mesure_controller import LiveMesureController
 from controllers.init_controller import InitController
 from controllers.mesure_controller import MesureController
 from controllers.admin_controller import AdminController
 from controllers.connexion_controller import ConnexionController
-from models.security import admin_key_configured, verify_admin_key, configure_admin_key
-from models.audit import (
-    JournalAudit,
-    EV_CONNEXION, EV_INIT_DEBUT, EV_INIT_FIN, EV_INIT_INTERROMPUE,
-    EV_INIT_ECHEC, EV_INIT_VALIDEE, EV_CAL_DEBUT, EV_CAL_SERIE,
-    EV_CAL_FIN, EV_CAL_INTERROMPUE, EV_EXPORT_EXCEL,
-    EV_SIMULATION_ACTIVE, EV_SIMULATION_DESACTIVE,
-    EV_ADMIN_AUTH, EV_ADMIN_LOCK, EV_ADMIN_CLE,
-    EV_ERREUR, EV_ARRET,
-)
+from models.security import admin_key_configured
+from models.audit import JournalAudit, EV_ARRET
 
 logger = creer_logger("ui")
 
 # ── Charte graphique (palette claire + helpers) ─────────────────────────────────
 # La palette et les fabriques de widgets vivent désormais dans views/theme.py.
 from views.theme import (
-    C, FONT, FONT_SMALL, FONT_BOLD, FONT_TITLE, FONT_LABEL, FONT_VALUE, FONT_MONO,
-    ACCENT_VIOLET, ACCENT_VIOLET_HOVER, ACCENT_GREEN, ACCENT_RED, NOIR,
+    C, FONT, FONT_SMALL, FONT_BOLD, FONT_LABEL, FONT_MONO,
+    ACCENT_VIOLET, ACCENT_GREEN, ACCENT_RED,
     lbl, sep, card, btn, btn_noir, btn_accent, section_title, champ_saisie,
 )
 
@@ -100,12 +93,18 @@ class ApplicationIPQ(tk.Tk):
         self._monitor.set_com_actif(self.var_com_mesure.get())
 
         self._naviguer("connexion")
-        self._tick_horloge()
         self._thermo = ThermoController(
             self, self.var_t, self.var_hr,
             ThermoService(self.gp, est_occupe=lambda: self._acq_en_cours),
         )
         self._thermo.demarrer()
+        # Afficheur tension permanent : lit com1/com2 en continu quand l'app est au
+        # repos (en pause pendant une acquisition pour ne pas lui voler de mesures).
+        self._live_mesure = LiveMesureController(
+            self, {"com1": self.var_v1, "com2": self.var_v2},
+            LiveMesureService(self.gp, est_occupe=lambda: self._acq_en_cours),
+        )
+        self._live_mesure.demarrer()
 
     # ══════════════════════════════════════════════════════════════════════════
     # Styles ttk (palette claire partagée)
@@ -257,13 +256,6 @@ class ApplicationIPQ(tk.Tk):
         self._btn_admin.pack(fill="x", pady=1)
         self._nav_btns["admin"] = self._btn_admin
 
-        # Pied sidebar — export
-        sep(sb, C["border"]).pack(fill="x")
-        footer = tk.Frame(sb, bg=C["bg_sidebar"])
-        footer.pack(fill="x", padx=8, pady=10)
-        btn(footer, "↓  Save Excel", self._exporter_xls,
-            color=C["bg_success"], fgcolor=C["txt_green"],
-            padx=10, pady=7).pack(fill="x")
 
     def _naviguer(self, vue_id: str) -> None:
         if vue_id == "admin" and not self._admin_actif:
@@ -331,7 +323,9 @@ class ApplicationIPQ(tk.Tk):
         self.var_t       = tk.StringVar(value="T: — °C")
         self.var_hr      = tk.StringVar(value="RH: — %")
         self.var_dist_tb = tk.StringVar(value="— mm")
-        self.var_date    = tk.StringVar(value="")
+        # Afficheurs « cadran » temps réel des multimètres (façon paillasse).
+        self.var_v1      = tk.StringVar(value="UR: — V")
+        self.var_v2      = tk.StringVar(value="UL: — V")
 
         # Badge opérateur
         self.lbl_operateur = tk.Label(
@@ -346,10 +340,11 @@ class ApplicationIPQ(tk.Tk):
         sensors_frame.pack(side="right", padx=14)
 
         for var, icon in [
-            (self.var_date,    "📅"),
             (self.var_dist_tb, "⇔"),
             (self.var_hr,      "💧"),
             (self.var_t,       "🌡"),
+            (self.var_v1,      "⚡"),
+            (self.var_v2,      "⚡"),
         ]:
             f = tk.Frame(sensors_frame, bg=C["bg_topbar"])
             f.pack(side="right", padx=12)
@@ -415,8 +410,8 @@ class ApplicationIPQ(tk.Tk):
         self._port_vars   = {}
         self._port_labels = {}
         self._port_combos = {}   # les 3 menus de rôle (à ne pas confondre avec la Source thermo)
-        for nom, label in [("com1", "Multimeter 1"),
-                           ("com2", "Multimeter 2"),
+        for nom, label in [("com1", f"Multimeter {label_multimetre('com1')}"),
+                           ("com2", f"Multimeter {label_multimetre('com2')}"),
                            ("thermo1", "Thermohygrometer")]:
             row = tk.Frame(c_ports, bg=C["bg_card"])
             row.pack(fill="x", padx=14, pady=5)
@@ -522,7 +517,7 @@ class ApplicationIPQ(tk.Tk):
 
         self.lbl_val_hint = lbl(
             val_inner,
-            "Run both COM 1 and COM 2 initialization before approval.",
+            f"Run both {label_multimetre('com1')} and {label_multimetre('com2')} initialization before approval.",
             FONT_SMALL, C["txt_muted"], C["bg_card"],
         )
         self.lbl_val_hint.pack(anchor="w", pady=(0, 8))
@@ -540,11 +535,12 @@ class ApplicationIPQ(tk.Tk):
 
     def _build_init_card(self, parent, cible: str) -> None:
         n = cible[-1]
+        label = label_multimetre(cible)
         c = card(parent)
         c.pack(fill="x", padx=20, pady=(0, 8))
         h = tk.Frame(c, bg=C["bg_card"])
         h.pack(fill="x", padx=14, pady=(12, 6))
-        lbl(h, f"Init COM{n}", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(side="left")
+        lbl(h, f"Init {label}", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(side="left")
         statut = lbl(h, "Standby", FONT_SMALL, C["txt_muted"], C["bg_card"])
         statut.pack(side="right")
         setattr(self, f"lbl_init{n}_statut", statut)
@@ -555,7 +551,7 @@ class ApplicationIPQ(tk.Tk):
         mv = tk.Frame(c, bg=C["bg_card"])
         mv.pack(fill="x", padx=14, pady=(0, 12))
         for attr, txt in [
-            (f"var_m_init{n}", f"M init{n}"), (f"var_v_init{n}", f"V init{n}"),
+            (f"var_m_init{n}", f"M init {label}"), (f"var_v_init{n}", f"V init {label}"),
             (f"var_t_init{n}", "Mean T"),      (f"var_hr_init{n}", "Mean RH"),
         ]:
             sub = tk.Frame(mv, bg=C["bg_card"])
@@ -566,11 +562,11 @@ class ApplicationIPQ(tk.Tk):
             tk.Label(sub, textvariable=var, font=("Segoe UI", 13, "bold"),
                      fg=C["txt_blue"], bg=C["bg_card"]).pack(anchor="w")
         pady_btn = (0, 4) if cible == "com1" else (0, 12)
-        btn_noir(c, f"▶   Run COM{n} initialization",
+        btn_noir(c, f"▶   Run {label} initialization",
                  command=lambda ci=cible: self._lancer_init(ci),
                  padx=12, pady=6).pack(anchor="w", padx=14, pady=pady_btn)
         if cible == "com1":
-            b_seq = btn(c, "⏩   Initialize COM1 then COM2 automatically",
+            b_seq = btn(c, f"⏩   Initialize {label_multimetre('com1')} then {label_multimetre('com2')} automatically",
                         command=self._lancer_init_sequentielle,
                         color=C["bg_card"], fgcolor=C["txt_secondary"],
                         padx=12, pady=5)
@@ -611,13 +607,13 @@ class ApplicationIPQ(tk.Tk):
         lbl(row_sel, "Measuring multimeter:", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(
             side="left", padx=(0, 12))
         self._btn_com1 = btn(
-            row_sel, "COM 1",
+            row_sel, label_multimetre("com1"),
             command=lambda: self.var_com_mesure.set("com1"),
             color=C["bg_input"], fgcolor=C["txt_secondary"],
             padx=14, pady=6)
         self._btn_com1.pack(side="left", padx=(0, 6))
         self._btn_com2 = btn(
-            row_sel, "COM 2",
+            row_sel, label_multimetre("com2"),
             command=lambda: self.var_com_mesure.set("com2"),
             color=C["bg_input"], fgcolor=C["txt_secondary"],
             padx=14, pady=6)
@@ -886,7 +882,7 @@ class ApplicationIPQ(tk.Tk):
         getattr(self, f"prog_init{n}")["value"] = 0
         self._monitor.set_nb_points(nbp)
         getattr(self, f"lbl_init{n}_statut").configure(text="Running…", fg=C["txt_amber"])
-        self._badge(f"● COM{n} initialization running", C["txt_amber"], "#3a2a00")
+        self._badge(f"● {label_multimetre(cible)} initialization running", C["txt_amber"], "#3a2a00")
 
     def _vue_init_standby(self) -> None:
         self._badge("● Standby", C["txt_muted"], C["bg_badge"])
@@ -894,7 +890,7 @@ class ApplicationIPQ(tk.Tk):
     def _vue_init_interrompu(self, cible: str) -> None:
         n = cible[-1]
         getattr(self, f"lbl_init{n}_statut").configure(text="Interrupted", fg=C["txt_red"])
-        self._log(f"{cible.upper()} initialization interrupted — not recorded.", "err")
+        self._log(f"{label_multimetre(cible)} initialization interrupted — not recorded.", "err")
 
     def _vue_init_resultats(self, cible: str, m, v, t_moy, hr_moy) -> None:
         n = cible[-1]
@@ -907,14 +903,14 @@ class ApplicationIPQ(tk.Tk):
         self._monitor.on_init_complete(cible, m, v)
         if hasattr(self, "tree"):
             iid = f"init_{cible}"
-            valeurs = (f"Init {cible.upper()}", f"{self.gestion_init.distance_mm:.1f}",
+            valeurs = (f"Init {label_multimetre(cible)}", f"{self.gestion_init.distance_mm:.1f}",
                        f"{m:.6f}", f"{v:.6f}", f"{t_moy:.2f}", f"{hr_moy:.2f}")
             if self.tree.exists(iid):
                 self.tree.item(iid, values=valeurs)
             else:
                 pos = len([i for i in self.tree.get_children("") if str(i).startswith("init_")])
                 self.tree.insert("", pos, iid=iid, values=valeurs, tags=("init",))
-        self._log(f"COM{n} initialization — M={m:.6f}  V={v:.6f}", "ok")
+        self._log(f"{label_multimetre(cible)} initialization — M={m:.6f}  V={v:.6f}", "ok")
 
     def _vue_init_pret(self) -> None:
         self.btn_valider_init.configure(
@@ -1037,15 +1033,14 @@ class ApplicationIPQ(tk.Tk):
         self.btn_cal_start.configure(state="disabled")
         self.btn_final.configure(state="disabled")
         self.btn_cal_stop.configure(state="normal")   # la mesure finale est interruptible
-        self._badge("● Final measurement — COM1 + COM2", C["txt_amber"], "#3a2a00")
-        self._log("Final measurement started (COM1 then COM2).", "info")
+        self._badge(f"● Final measurement — {label_multimetre('com1')} + {label_multimetre('com2')}", C["txt_amber"], "#3a2a00")
+        self._log(f"Final measurement started ({label_multimetre('com1')} then {label_multimetre('com2')}).", "info")
 
     def _vue_mesure_finale_point(self, avancement: int) -> None:
         self.progress_statut["value"] = avancement
 
     def _vue_mesure_finale_serie(self, cible, m, v, t_moy, hr_moy, perdus, dist) -> None:
-        n = cible[-1]
-        libelle = f"Final COM{n}" + (f"  ⚠ {perdus} invalid" if perdus else "")
+        libelle = f"Final {label_multimetre(cible)}" + (f"  ⚠ {perdus} invalid" if perdus else "")
         iid = f"final_{cible}"
         valeurs = (libelle, f"{dist:.1f}", f"{m:.6f}", f"{v:.6f}",
                    f"{t_moy:.2f}", f"{hr_moy:.2f}")
@@ -1055,8 +1050,8 @@ class ApplicationIPQ(tk.Tk):
             self.tree.insert("", "end", iid=iid, values=valeurs, tags=("final",))
         self._monitor.on_final_complete(cible, m, v)
         if perdus:
-            self._log(f"⚠ Final COM{n}: {perdus} point(s) perdu(s) — conservés (INVALID).", "err")
-        self._log(f"Final COM{n} — M={m:.6f}  V={v:.6f}", "ok")
+            self._log(f"⚠ Final {label_multimetre(cible)}: {perdus} point(s) perdu(s) — conservés (INVALID).", "err")
+        self._log(f"Final {label_multimetre(cible)} — M={m:.6f}  V={v:.6f}", "ok")
 
     def _vue_mesure_finale_erreur(self, erreur: str) -> None:
         self._badge("● Error", C["txt_red"], C["bg_danger"])
@@ -1074,7 +1069,7 @@ class ApplicationIPQ(tk.Tk):
             self._log("Final measurement interrupted.", "err")
         else:
             self._badge("● Final measurement completed", C["txt_green"], "#1a3a1a")
-            self._statut("Final measurement completed — Final COM1 / COM2 exported.")
+            self._statut(f"Final measurement completed — Final {label_multimetre('com1')} / {label_multimetre('com2')} exported.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Helpers
@@ -1368,7 +1363,7 @@ class ApplicationIPQ(tk.Tk):
             # A : test conscient du bus (le série a .is_open, pas le VISA/GPIB).
             actif = self.gp.thermo_actif() if cible == "thermo1" else self.gp.role_connecte(cible)
             if not actif:
-                manquants.append(cible.upper())
+                manquants.append(label_multimetre(cible))
 
         if not manquants:
             return True
@@ -1415,11 +1410,6 @@ class ApplicationIPQ(tk.Tk):
         else:
             messagebox.showinfo("Export", "No Excel file is open.")
 
-    def _tick_horloge(self) -> None:
-        # Heure retirée (l'OS l'affiche déjà) ; on tient seulement la date à jour.
-        self.var_date.set(datetime.now().strftime("%d/%m/%Y"))
-        self.after(60_000, self._tick_horloge)
-
     def _quitter(self) -> None:
         if self._acq_en_cours:
             quitter = messagebox.askyesno(
@@ -1460,6 +1450,7 @@ class ApplicationIPQ(tk.Tk):
                 if not quitter:
                     return
         self._thermo.arreter()
+        self._live_mesure.arreter()
         self.gp.fermer_tout()
         self.destroy()
 

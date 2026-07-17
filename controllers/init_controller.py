@@ -2,6 +2,7 @@
 """controllers/init_controller.py — orchestration du flux d'initialisation COM1/COM2 (sans widgets)."""
 from models.acquisition import Acquisition
 from models.audit import EV_INIT_DEBUT, EV_INIT_FIN, EV_INIT_INTERROMPUE, EV_INIT_VALIDEE
+from core.config import label_multimetre
 
 
 class InitController:
@@ -15,7 +16,7 @@ class InitController:
         if app._acq_en_cours:
             app.afficher_avertissement("Operation in progress", "An acquisition is already running.")
             return
-        app.journal.enregistrer(EV_INIT_DEBUT, f"cible=COM{cible[-1]}")
+        app.journal.enregistrer(EV_INIT_DEBUT, f"cible={label_multimetre(cible)}")
         if not app._verifier_ports_requis(cible, "thermo1"):
             return
         app._acq_en_cours = True
@@ -37,16 +38,16 @@ class InitController:
         app._vue_init_standby()
         if m is None:
             app._init_sequentielle = False
-            app.journal.enregistrer(EV_INIT_INTERROMPUE, f"cible={cible.upper()}")
+            app.journal.enregistrer(EV_INIT_INTERROMPUE, f"cible={label_multimetre(cible)}")
             app._vue_init_interrompu(cible)
             return
         app.journal.enregistrer(
             EV_INIT_FIN,
-            f"cible={cible.upper()}  M={m:.6f}  V={v:.6f}  T={t_moy:.2f}°C",
+            f"cible={label_multimetre(cible)}  M={m:.6f}  V={v:.6f}  T={t_moy:.2f}°C",
         )
         app._vue_init_resultats(cible, m, v, t_moy, hr_moy)
         if cible == "com1" and app._init_sequentielle:
-            app._log("Sequential mode: launching COM2 automatically…", "info")
+            app._log(f"Sequential mode: launching {label_multimetre('com2')} automatically…", "info")
             app.after(300, lambda: self.lancer("com2"))
             return
         app._init_sequentielle = False
@@ -59,7 +60,7 @@ class InitController:
         if not app.gestion_init.valider_init():
             app.afficher_avertissement(
                 "Approval unavailable",
-                "Both COM1 and COM2 initialization acquisitions must be completed.",
+                f"Both {label_multimetre('com1')} and {label_multimetre('com2')} initialization acquisitions must be completed.",
             )
             return
         if not app.export_xls:
@@ -75,7 +76,7 @@ class InitController:
             app.afficher_erreur("Export error", str(exc))
             return
         nb = app.export_xls.serie_courante
-        app._log(f"COM1 / COM2 initialization columns exported ({nb-1}, {nb}).", "ok")
+        app._log(f"{label_multimetre('com1')} / {label_multimetre('com2')} initialization columns exported ({nb-1}, {nb}).", "ok")
         app._vue_init_approuve()
         app.journal.enregistrer(
             EV_INIT_VALIDEE,

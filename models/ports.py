@@ -72,7 +72,6 @@ class GestionPorts:
         self._simulation_index = 0
         logger.warning("SIMULATION MODE %s", "ENABLED" if enabled else "DISABLED")
 
-    # ── Découverte ────────────────────────────────────────────────────────────
 
     def lister_ports_serie(self) -> List[str]:
         """Liste tous les ports série disponibles (ex. ['COM1', 'COM3'])."""
@@ -84,16 +83,28 @@ class GestionPorts:
         logger.info("Ports série détectés : %s", disponibles)
         return disponibles
 
+    def _resource_manager(self):
+        """
+        ResourceManager VISA unique, gardé ouvert tant que l'application vit.
+
+        pyvisa.ResourceManager() est un singleton : toute construction renvoie la
+        MÊME instance, et rm.close() ferme la session partagée ET tous les
+        instruments ouverts par elle. Un close() « de courtoisie » après un simple
+        listing invalidait donc COM1/COM2 (VI_ERROR_INV_OBJECT à la mesure).
+        Seul fermer_tout() a le droit de fermer ce manager.
+        """
+        if self.gpib_rm is None:
+            self.gpib_rm = pyvisa.ResourceManager()
+        return self.gpib_rm
+
     def lister_ressources_visa(self) -> List[str]:
         """Liste les ressources VISA disponibles (GPIB, USB-TMC…)."""
         if not PYVISA_DISPONIBLE:
             logger.warning("pyvisa non installé — GPIB indisponible.")
             return []
         try:
-            rm = pyvisa.ResourceManager()
-            ressources = list(rm.list_resources())
+            ressources = list(self._resource_manager().list_resources())
             logger.info("Ressources VISA détectées : %s", ressources)
-            rm.close()
             return ressources
         except Exception as exc:
             logger.error("Erreur détection VISA : %s", exc)
@@ -164,7 +175,7 @@ class GestionPorts:
         """Identité lue à la connexion (ex. 'HP3458A'), ou '' si non identifiée."""
         return self._identites.get(cible, "")
 
-    # ── Source thermohygromètre ────────────────────────────────────────────────
+ 
 
     def set_thermo_mode(self, mode: str) -> None:
         """Choisit la source T/HR : 'ascii' | 'ruska' | 'manuel'."""
@@ -198,7 +209,6 @@ class GestionPorts:
                 return False
         return True   # VISA : présent = exploitable
 
-    # ── Connexions ────────────────────────────────────────────────────────────
 
     def connecter(self, adresse: str, cible: str) -> bool:
         """
@@ -219,9 +229,7 @@ class GestionPorts:
             return False
         inst = None
         try:
-            if self.gpib_rm is None:
-                self.gpib_rm = pyvisa.ResourceManager()
-            inst = self.gpib_rm.open_resource(adresse)
+            inst = self._resource_manager().open_resource(adresse)
             inst.timeout = int(TIMEOUT_PORT_DEFAULT * 1000)
             inst.write_termination = "\n"
             inst.read_termination = "\n"
@@ -322,8 +330,11 @@ class GestionPorts:
                 self.gpib_rm.close()
             except Exception:
                 pass
+            # fermer_tout() ne clôt pas forcément l'application (ex. bascule du mode
+            # simulation) : on oublie le manager fermé pour qu'une reconnexion
+            # ultérieure en rouvre un valide au lieu de réutiliser une session morte.
+            self.gpib_rm = None
 
-    # ── Backboard (vérification continue) ────────────────────────────────────
 
     def demarrer_backboard(self, callback_erreur: Optional[Callable[[str], None]] = None) -> None:
         """

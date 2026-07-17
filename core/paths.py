@@ -3,6 +3,17 @@
 import os
 from datetime import datetime
 
+# Racine du programme (dossier contenant main.py), parent de core/. Indépendante
+# du répertoire de lancement — même ancrage que les logs (core/logger.py).
+_RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def get_export_dir() -> str:
+    """Dossier des exports réels : <programme>/export.
+    Ancré sur la racine du programme (pas le CWD) pour ne plus déverser les
+    classeurs à côté du code. Le dossier est créé au besoin par ExportXLS.ouvrir()."""
+    return os.path.join(_RACINE, "export")
+
 
 def nom_fichier_xls(indice_notation: str) -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -8,6 +8,7 @@ from models.calibration import BoucleCalibration
 from models.audit import (
     EV_CAL_DEBUT, EV_CAL_SERIE, EV_CAL_FIN, EV_CAL_INTERROMPUE, EV_ERREUR,
 )
+from core.config import label_multimetre
 
 
 class MesureController:
@@ -28,7 +29,7 @@ class MesureController:
         if not app.gestion_init.init_validee:
             app.afficher_avertissement(
                 "Initialization required",
-                "COM1 and COM2 initialization must be approved\n"
+                f"{label_multimetre('com1')} and {label_multimetre('com2')} initialization must be approved\n"
                 "on the Initialization page before measurement can start.",
             )
             return
@@ -76,10 +77,10 @@ class MesureController:
         boucle.lancer()
         app.journal.enregistrer(
             EV_CAL_DEBUT,
-            f"nb_series={x}  cible={cible.upper()}  "
+            f"nb_series={x}  cible={label_multimetre(cible)}  "
             f"dist={app.gestion_init.distance_mm:.1f} mm  attente={attente_s}s",
         )
-        app._log(f"Measurement started — {x} series on {cible.upper()}.", "info")
+        app._log(f"Measurement started — {x} series on {label_multimetre(cible)}.", "info")
 
     def arreter(self) -> None:
         app = self.app
@@ -178,11 +179,11 @@ class MesureController:
                                                  label=f"Final COM{cible[-1]}")
                     app.journal.enregistrer(
                         EV_CAL_SERIE,
-                        f"FINALE {cible.upper()}  M={m:.6f}  V={v:.6f}  perdus={acq.points_perdus}")
+                        f"FINALE {label_multimetre(cible)}  M={m:.6f}  V={v:.6f}  perdus={acq.points_perdus}")
                     app.after(0, lambda c=cible, m=m, v=v, tm=t_moy, hm=hr_moy,
                               p=acq.points_perdus, d=dist:
                               app._vue_mesure_finale_serie(c, m, v, tm, hm, p, d))
-                    series_ok.append(f"COM{cible[-1]}")   # série finale réellement exportée
+                    series_ok.append(label_multimetre(cible))   # série finale réellement exportée (journal)
             except Exception as exc:
                 erreur = str(exc)
                 app.journal.enregistrer(EV_ERREUR, f"Mesure finale échouée : {exc}")

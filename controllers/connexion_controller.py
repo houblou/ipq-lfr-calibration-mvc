@@ -6,7 +6,8 @@ import time
 
 from models.export_xls import ExportXLS
 from models.audit import EV_CONNEXION, EV_EXPORT_EXCEL, EV_ERREUR
-from core.paths import get_desktop_path
+from core.paths import get_desktop_path, get_export_dir
+from core.config import label_multimetre
 
 
 class ConnexionController:
@@ -23,7 +24,7 @@ class ConnexionController:
         app = self.app
         port = app._port_vars[cible].get().strip()
         if not port:
-            app.afficher_avertissement("Missing instrument", f"Select an instrument for {cible.upper()}.")
+            app.afficher_avertissement("Missing instrument", f"Select an instrument for {label_multimetre(cible)}.")
             return
         if app.gp.connecter(port, cible):   # bus auto : COMx -> série, GPIB… -> VISA
             app._vue_port_ok(cible, port)
@@ -123,7 +124,7 @@ class ConnexionController:
         simulation = app.gp.mode_simulation
         export_index = f"SIMULATION_{indice}" if simulation else indice
         dossier_export = (os.path.join(get_desktop_path(), "IPQ_LFR_Simulation")
-                          if simulation else ".")
+                          if simulation else get_export_dir())
         app.export_xls = ExportXLS(export_index, dossier=dossier_export,
                                    simulation=simulation, operateur=operateur,
                                    nb_points=app.gestion_init.nb_points)

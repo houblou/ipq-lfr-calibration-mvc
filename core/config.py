@@ -18,3 +18,14 @@ BIP_FREQ_END          = 1400
 BIP_DUREE_MS          = 110
 
 V_SEUIL_ALERTE        = 0.01
+
+# ── Étiquettes d'affichage des deux multimètres (nom paillasse) ─────────────────
+# Les clés internes restent 'com1'/'com2' PARTOUT dans le code (attributs, dicts,
+# bus) ; seule la présentation à l'opérateur change. com1 → UR, com2 → UL.
+LABELS_MULTIMETRE = {"com1": "UR", "com2": "UL"}
+
+
+def label_multimetre(cible: str) -> str:
+    """Nom paillasse d'un rôle multimètre : 'com1' → 'UR', 'com2' → 'UL'.
+    Repli en majuscules pour toute cible non mappée (ex. 'thermo1' → 'THERMO1')."""
+    return LABELS_MULTIMETRE.get(cible, cible.upper())

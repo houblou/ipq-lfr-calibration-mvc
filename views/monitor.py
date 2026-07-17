@@ -20,7 +20,7 @@ except Exception:
     _MPL = False
 
 from core.logger import creer_logger
-from core.config import V_SEUIL_ALERTE, NB_POINTS
+from core.config import V_SEUIL_ALERTE, NB_POINTS, label_multimetre
 from models import stats
 
 logger = creer_logger("phase6")
@@ -245,7 +245,7 @@ class _ReadoutStrip(tk.Frame):
 
     def update_stats(self, com: str, serie: str, i: int, t: float, hr: float,
                      m_prov: Optional[float], v_prov: Optional[float]) -> None:
-        self._vars["com"].set(f"COM {com[-1]}" if com else "—")
+        self._vars["com"].set(label_multimetre(com) if com else "—")
         self._vars["serie"].set(serie)
         self._vars["pt"].set(f"{i} / {self._nb_points}")
         self._vars["t"].set(f"{t:.1f} °C")
@@ -401,7 +401,7 @@ class MonitorTab(tk.Frame):
 
         tk.Label(hdr, text="Instrument monitor", font=_FB,
                  bg=_C["header"], fg=_C["primary"]).pack(side="left", padx=(14, 10), pady=9)
-        self._lbl_com = tk.Label(hdr, text="Measuring: COM 1", font=_FM,
+        self._lbl_com = tk.Label(hdr, text=f"Measuring: {label_multimetre('com1')}", font=_FM,
                                  bg=_C["header"], fg=_C["second"])
         self._lbl_com.pack(side="left", padx=4, pady=9)
 
@@ -513,14 +513,14 @@ class MonitorTab(tk.Frame):
     def on_init_point(self, cible: str, i: int,
                       val: Optional[float], t: float, hr: float) -> None:
         sid  = f"init_{cible}"
-        data = self._get_or_create(sid, f"Init {cible.upper()}", _C["init_fg"])
+        data = self._get_or_create(sid, f"Init {label_multimetre(cible)}", _C["init_fg"])
         if i == 1:
             data.reinit()
             self._follow_live = True
         data.ajouter(val)
         self._maj_ligne(sid)
         self._suivre(sid)
-        self._readout.update_stats(cible, f"Init {cible.upper()}", i, t, hr,
+        self._readout.update_stats(cible, f"Init {label_multimetre(cible)}", i, t, hr,
                                    data.m_provisoire(), None)
 
     def on_init_complete(self, cible: str,
@@ -564,14 +564,14 @@ class MonitorTab(tk.Frame):
     def on_final_point(self, cible: str, i: int,
                        val: Optional[float], t: float, hr: float) -> None:
         sid  = f"final_{cible}"
-        data = self._get_or_create(sid, f"Final {cible.upper()}", _C["amber"])
+        data = self._get_or_create(sid, f"Final {label_multimetre(cible)}", _C["amber"])
         if i == 1:
             data.reinit()
             self._follow_live = True
         data.ajouter(val)
         self._maj_ligne(sid)
         self._suivre(sid)
-        self._readout.update_stats(cible, f"Final {cible.upper()}", i, t, hr,
+        self._readout.update_stats(cible, f"Final {label_multimetre(cible)}", i, t, hr,
                                    data.m_provisoire(), None)
 
     def on_final_complete(self, cible: str, m: float, v: float) -> None:
@@ -590,7 +590,7 @@ class MonitorTab(tk.Frame):
         """Indique quel COM est mesuré (choisi sur la page Measurement)."""
         self._com_actif.set(com)
         if hasattr(self, "_lbl_com"):
-            self._lbl_com.configure(text=f"Measuring: COM {com[-1]}")
+            self._lbl_com.configure(text=f"Measuring: {label_multimetre(com)}")
 
     def reset(self) -> None:
         self._series.clear()

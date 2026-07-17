@@ -10,6 +10,14 @@ logs/
 *.xlsx
 *.xls
 
+# Exports réels (mesures)
+export/
+
+# Scripts de test VISA autonomes (hors application)
+/test.py
+/test2.py
+/example_visa_read.py
+
 # Environnements virtuels
 .venv/
 venv/

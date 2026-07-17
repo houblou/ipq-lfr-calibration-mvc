@@ -44,8 +44,8 @@ class ThermoService:
         self._thread.start()
 
     def arreter(self) -> None:
-        # E : attendre la fin de la lecture en cours avant de rendre la main, pour
-        # que fermer_tout() ne ferme pas le port pendant que ce thread lit dessus.
+        # E: Wait for the current read to complete before returning, so that
+        # fermer_tout() does not close the port while this thread is reading from it.
         self._actif = False
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():

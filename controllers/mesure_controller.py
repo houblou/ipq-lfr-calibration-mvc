@@ -8,7 +8,7 @@ from models.calibration import BoucleCalibration
 from models.audit import (
     EV_CAL_DEBUT, EV_CAL_SERIE, EV_CAL_FIN, EV_CAL_INTERROMPUE, EV_ERREUR,
 )
-from core.config import label_multimetre
+from core.config import NB_POINTS, label_multimetre
 
 
 class MesureController:
@@ -146,7 +146,8 @@ class MesureController:
         app._arret_finale = False   # intention d'arrêt pour la fenêtre course→thread (cf. arreter)
         app._vue_mesure_finale_demarrage()
         dist = app.gestion_init.distance_mm
-        nbp  = app.gestion_init.nb_points
+        # Mesure finale COM1/COM2 : TOUJOURS NB_POINTS (30) — comme l'init, hors overlock.
+        nbp  = NB_POINTS
 
         def _run():
             interrompu = False

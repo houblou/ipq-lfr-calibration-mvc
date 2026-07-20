@@ -103,9 +103,13 @@ class TestExportExcel(unittest.TestCase):
         self.assertEqual(feuille.cell(row=ROW_HEURE, column=2).value, "10:15:00")
 
     def test_refuse_une_serie_de_mauvaise_longueur(self):
-        # Une longueur incorrecte reste rejetee.
+        # nb_points = CAPACITE de la feuille : on rejette le DEPASSEMENT et la serie
+        # VIDE. Une serie plus COURTE que la capacite est valide (une X-serie de 20
+        # points dans une feuille de 30 : init/finale restent a 30).
         with self.assertRaises(ValueError):
-            self.export.ajouter_serie([1.0] * 29, 1.0, 0.0)
+            self.export.ajouter_serie([1.0] * (self.export.nb_points + 1), 1.0, 0.0)  # depassement
+        with self.assertRaises(ValueError):
+            self.export.ajouter_serie([], 1.0, 0.0)                                   # vide
 
     def test_point_invalide_conserve_et_marque(self):
         # Un point None est CONSERVE et marque 'INVALID' (jamais supprime),

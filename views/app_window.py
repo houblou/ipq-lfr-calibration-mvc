@@ -6,7 +6,7 @@ from typing import Optional
 
 from core.logger import creer_logger
 from core.paths import get_desktop_path
-from core.config import ATTENTE_INTER_SERIE_S, NB_POINTS_MIN, NB_POINTS_MAX, label_multimetre
+from core.config import ATTENTE_INTER_SERIE_S, NB_POINTS, NB_POINTS_MIN, NB_POINTS_MAX, label_multimetre
 from models.ports import GestionPorts
 from models.acquisition import Acquisition
 from models.export_xls import ExportXLS
@@ -611,7 +611,7 @@ class ApplicationIPQ(tk.Tk):
 
     def _vue_calibration(self) -> tk.Frame:
         f = tk.Frame(self.frame_content, bg=C["bg_app"])
-        _section_title(f, "Measurement — X series")
+        _section_title(f, "aquisition & calibration")
 
         # ── Multimètre mesuré (sélectionnable ici) ────────────────────────
         c_sel = card(f)
@@ -632,7 +632,7 @@ class ApplicationIPQ(tk.Tk):
         grid = tk.Frame(c, bg=C["bg_card"])
         grid.pack(padx=14, pady=14)
 
-        lbl(grid, "Number of series X:", FONT, C["txt_secondary"], C["bg_card"]).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=6)
+        lbl(grid, "Number of series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=6)
         self.var_nb_series = tk.IntVar(value=5)
         sp = tk.Spinbox(
             grid,
@@ -651,7 +651,7 @@ class ApplicationIPQ(tk.Tk):
         )
         sp.grid(row=0, column=1, sticky="w", pady=6)
 
-        lbl(grid, "Wait between series (s):", FONT, C["txt_secondary"], C["bg_card"]).grid(row=1, column=0, sticky="e", padx=(0, 10), pady=6)
+        lbl(grid, "Wait between series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=1, column=0, sticky="e", padx=(0, 10), pady=6)
         self.var_attente_s = tk.IntVar(value=60)
         tk.Spinbox(
             grid,
@@ -669,7 +669,32 @@ class ApplicationIPQ(tk.Tk):
             highlightbackground=C["border_light"],
             highlightthickness=1,
         ).grid(row=1, column=1, sticky="w", pady=6)
-        lbl(grid, "Beeps (1/s, rising pitch) play during the wait.", FONT_SMALL, C["txt_muted"], C["bg_card"]).grid(row=1, column=2, sticky="w", padx=(10, 0), pady=6)
+        lbl(grid, "Beeps 1/s play during the wait", FONT_SMALL, C["txt_muted"], C["bg_card"]).grid(row=1, column=2, sticky="w", padx=(10, 0), pady=6)
+
+        # ── Overlock : points par X-série (2–50). Init/finale restent à 30 ; la
+        #    feuille Excel est dimensionnée sur max(30, points) via nb_points_feuille.
+        lbl(grid, "Points per series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
+        self.var_nb_points = tk.IntVar(value=self.gestion_init.nb_points)
+        tk.Spinbox(
+            grid,
+            from_=NB_POINTS_MIN,
+            to=NB_POINTS_MAX,
+            textvariable=self.var_nb_points,
+            width=6,
+            font=FONT,
+            bg=C["bg_input"],
+            fg=C["txt_primary"],
+            buttonbackground=C["bg_hover"],
+            relief="flat",
+            bd=1,
+            highlightbackground=C["border_light"],
+            highlightthickness=1,
+        ).grid(row=2, column=1, sticky="w", pady=6)
+        ovl_row = tk.Frame(grid, bg=C["bg_card"])
+        ovl_row.grid(row=2, column=2, sticky="w", padx=(10, 0), pady=6)
+        btn(ovl_row, "Apply", command=self._appliquer_overlock, padx=12, pady=4).pack(side="left")
+        lbl(ovl_row, f"Init/final stay {NB_POINTS} · sheet resizes to fit",
+            FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(side="left", padx=(8, 0))
 
         # Progression boucle
         self.lbl_serie_status = lbl(c, "Series — / —", FONT_BOLD, C["txt_blue"], C["bg_card"])
@@ -680,11 +705,11 @@ class ApplicationIPQ(tk.Tk):
 
         btn_cal_row = tk.Frame(f, bg=C["bg_app"])
         btn_cal_row.pack(anchor="w", padx=20, pady=(0, 20))
-        self.btn_cal_start = btn(btn_cal_row, "▶  Start measurement", command=self._lancer_calibration, color=ACCENT_GREEN, fgcolor="#ffffff", padx=16, pady=9)
+        self.btn_cal_start = btn(btn_cal_row, "START", command=self._lancer_calibration, color=ACCENT_GREEN, fgcolor="#ffffff", padx=16, pady=9)
         self.btn_cal_start.configure(activebackground=ACCENT_GREEN, activeforeground="#ffffff")
         self.btn_cal_start.pack(side="left", padx=(0, 8))
-        self.btn_cal_stop = btn(btn_cal_row, "■  Stop", command=self._arreter_calibration, color=ACCENT_RED, fgcolor="#ffffff", padx=14, pady=9)
-        self.btn_cal_stop.configure(activebackground=ACCENT_RED, activeforeground="#ffffff", state="disabled")
+        self.btn_cal_stop = btn(btn_cal_row, "STOP", command=self._arreter_calibration, color=ACCENT_RED, fgcolor="#ffffff", padx=14, pady=9)
+        self.btn_cal_stop.configure(activebackground=ACCENT_RED, activeforeground="#ffffff", disabledforeground="#ffffff", state="disabled")
         self.btn_cal_stop.pack(side="left")
 
         self.btn_final = btn_noir(btn_cal_row, "⧉  Final measurement", command=self._mesure_finale, padx=14, pady=9)
@@ -829,7 +854,7 @@ class ApplicationIPQ(tk.Tk):
     def _maj_init_pt(self, cible: str, i: int, valeur, t: float, hr: float) -> None:
         n = cible[-1]
         getattr(self, f"prog_init{n}")["value"] = i
-        self.progress_statut.configure(maximum=self.gestion_init.nb_points)
+        self.progress_statut.configure(maximum=NB_POINTS)   # init = 30 points fixes
         self.progress_statut["value"] = i
         self._monitor.on_init_point(cible, i, valeur, t, hr)
         self.var_t.set(f"T: {t:g} °C")
@@ -839,7 +864,7 @@ class ApplicationIPQ(tk.Tk):
 
     def _vue_init_demarrage(self, cible: str) -> None:
         n = cible[-1]
-        nbp = self.gestion_init.nb_points
+        nbp = NB_POINTS   # init COM1/COM2 : toujours 30 points (hors overlock X-série)
         getattr(self, f"prog_init{n}").configure(maximum=nbp)
         getattr(self, f"prog_init{n}")["value"] = 0
         self._monitor.set_nb_points(nbp)
@@ -861,7 +886,7 @@ class ApplicationIPQ(tk.Tk):
         getattr(self, f"var_t_init{n}").set(f"{t_moy:.2f} °C")
         getattr(self, f"var_hr_init{n}").set(f"{hr_moy:.2f} %")
         getattr(self, f"lbl_init{n}_statut").configure(text="Completed", fg=C["txt_green"])
-        getattr(self, f"prog_init{n}")["value"] = self.gestion_init.nb_points
+        getattr(self, f"prog_init{n}")["value"] = NB_POINTS
         self._monitor.on_init_complete(cible, m, v)
         if hasattr(self, "tree"):
             iid = f"init_{cible}"
@@ -985,7 +1010,7 @@ class ApplicationIPQ(tk.Tk):
     # ── Vue Mesure finale (COM1 + COM2, comme l'init) ─────────────────────────
 
     def _vue_mesure_finale_demarrage(self) -> None:
-        nbp = self.gestion_init.nb_points
+        nbp = NB_POINTS   # mesure finale COM1/COM2 : toujours 30 points (comme l'init)
         self._monitor.set_nb_points(nbp)
         self.progress_statut.configure(maximum=nbp * 2)  # com1 puis com2
         self.progress_statut["value"] = 0
@@ -1144,7 +1169,14 @@ class ApplicationIPQ(tk.Tk):
         subprocess.Popen(f'explorer "{dossier}"')
 
     def _appliquer_overlock(self, _event=None) -> None:
-        """Overlock : applique le nombre de points par série (borné [MIN, MAX])."""
+        """Overlock : fixe le nombre de points par X-SÉRIE (borné [MIN, MAX]).
+
+        La feuille Excel doit contenir max(30, points) lignes de données — l'init et la
+        mesure finale restent à 30 points. On ne RÉINITIALISE la session que si la feuille
+        déjà créée est trop PETITE pour la nouvelle capacité (agrandissement) : sinon
+        `ajouter_serie` lèverait sur une X-série plus longue que la feuille. Un
+        rétrécissement (ou un choix <= 30) reste compatible et ne touche pas à l'init.
+        """
         if self._acq_en_cours:
             self.afficher_avertissement("Operation in progress", "Cannot change the point count during an acquisition.")
             return
@@ -1153,14 +1185,14 @@ class ApplicationIPQ(tk.Tk):
         except (tk.TclError, ValueError):
             self.afficher_avertissement("Invalid value", "Enter a whole number of points.")
             return
-        # Une session Excel fige sa mise en page sur l'ancien nb de points : on la
-        # RÉINITIALISE pour forcer une recréation cohérente (sinon ValueError à chaque
-        # mesure). L'init déjà acquise (faite avec l'ancien compte) est aussi remise à zéro.
-        if self.export_xls is not None:
+        borne = max(NB_POINTS_MIN, min(nb, NB_POINTS_MAX))
+        capacite_requise = max(NB_POINTS, borne)   # = nb_points_feuille pour cette valeur
+        if self.export_xls is not None and self.export_xls.nb_points < capacite_requise:
             if not self.demander_confirmation(
                 "Session will be reset",
-                "Changing the point count resets the current Excel session and the\n"
-                "initialization (they use the old point count).\n"
+                "This point count needs a larger Excel sheet than the current session.\n"
+                "Resetting clears the current file and the initialization\n"
+                "(they were laid out for fewer points).\n"
                 "You will recreate the session on the Connection page.\n\nContinue?",
             ):
                 return
@@ -1173,8 +1205,9 @@ class ApplicationIPQ(tk.Tk):
             self._vue_reset_session()
         applied = self.gestion_init.definir_nb_points(nb)
         self.var_nb_points.set(applied)
-        self._log(f"Overlock: {applied} points per series.", "ok")
-        self._statut(f"Overlock set — {applied} points/series. Create a new session on Connection.")
+        feuille = self.gestion_init.nb_points_feuille
+        self._log(f"Overlock: {applied} points per X-series (sheet capacity {feuille}).", "ok")
+        self._statut(f"Overlock set — {applied} points/X-series (init/final stay {NB_POINTS}).")
 
     def _vue_reset_session(self) -> None:
         """Purge l'affichage (Monitor + tableau Results) lors d'un changement de session."""
@@ -1233,37 +1266,8 @@ class ApplicationIPQ(tk.Tk):
         b_open_sim.pack(side="left", padx=(8, 0))
         self._actualiser_btn_sim()
 
-        # ── Overlock — points par série ────────────────────────────────────
-        c_ovl = card(inner)
-        c_ovl.pack(fill="x", padx=20, pady=(0, 10))
-        lbl(c_ovl, "Overlock — points per series", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(anchor="w", padx=14, pady=(12, 4))
-        lbl(
-            c_ovl,
-            f"Override the fixed 30 points (bounded {NB_POINTS_MIN}–{NB_POINTS_MAX}).\n" "Set BEFORE creating the Excel session — it fixes the sheet layout.",
-            FONT_SMALL,
-            C["txt_muted"],
-            C["bg_card"],
-        ).pack(anchor="w", padx=14, pady=(0, 8))
-        row_ovl = tk.Frame(c_ovl, bg=C["bg_card"])
-        row_ovl.pack(anchor="w", padx=14, pady=(0, 12))
-        lbl(row_ovl, "Points:", FONT, C["txt_secondary"], C["bg_card"]).pack(side="left", padx=(0, 8))
-        self.var_nb_points = tk.IntVar(value=self.gestion_init.nb_points)
-        tk.Spinbox(
-            row_ovl,
-            from_=NB_POINTS_MIN,
-            to=NB_POINTS_MAX,
-            textvariable=self.var_nb_points,
-            width=6,
-            font=FONT,
-            bg=C["bg_input"],
-            fg=C["txt_primary"],
-            buttonbackground=C["bg_hover"],
-            relief="flat",
-            bd=1,
-            highlightbackground=C["border_light"],
-            highlightthickness=1,
-        ).pack(side="left", padx=(0, 8))
-        btn(row_ovl, "Apply", command=self._appliquer_overlock, padx=12, pady=6).pack(side="left")
+        # (« Overlock — points par série » a été déplacé sur la page Calibration,
+        #  à côté du nombre de séries — là où l'opérateur configure réellement la mesure.)
 
         # ── Audit log ──────────────────────────────────────────────────────
         c_aud = card(inner)

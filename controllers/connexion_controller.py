@@ -80,7 +80,7 @@ class ConnexionController:
                           if simulation else get_export_dir())
         app.export_xls = ExportXLS(export_index, dossier=dossier_export,
                                    simulation=simulation, operateur=operateur,
-                                   nb_points=app.gestion_init.nb_points)
+                                   nb_points=app.gestion_init.nb_points_feuille)
         if app.export_xls.ouvrir():
             app.journal.enregistrer(
                 EV_CONNEXION, f"indice={indice}  excel={app.export_xls.chemin_fichier}")

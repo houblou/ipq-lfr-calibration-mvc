@@ -119,9 +119,14 @@ class ExportXLS:
         if self.ws is None:
             raise RuntimeError("Excel file is not open.")
 
-        if len(n) != self.nb_points:
+        # self.nb_points = CAPACITÉ de la feuille (= max(30, points X-série)). Une
+        # série valide en contient 1..capacité : init/finale = 30, X-série = 2..50,
+        # toutes <= capacité. On rejette seulement le DÉPASSEMENT (écraserait la
+        # synthèse) et la série vide. La longueur exacte de chaque série est garantie
+        # en amont par Acquisition (boucle déterministe sur son propre nb_points).
+        if not 1 <= len(n) <= self.nb_points:
             raise ValueError(
-                f"A series must contain exactly {self.nb_points} points; received: {len(n)}.")
+                f"A series must contain 1..{self.nb_points} points (sheet capacity); received: {len(n)}.")
         # Les points invalides (None) sont CONSERVES et marques 'INVALID' (jamais
         # supprimes) ; ils sont deja exclus du calcul M/V en amont.
         perdus = sum(1 for valeur in n if valeur is None)

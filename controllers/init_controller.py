@@ -2,7 +2,7 @@
 """controllers/init_controller.py — orchestration du flux d'initialisation COM1/COM2 (sans widgets)."""
 from models.acquisition import Acquisition
 from models.audit import EV_INIT_DEBUT, EV_INIT_FIN, EV_INIT_INTERROMPUE, EV_INIT_VALIDEE
-from core.config import label_multimetre
+from core.config import NB_POINTS, label_multimetre
 
 
 class InitController:
@@ -21,7 +21,8 @@ class InitController:
             return
         app._acq_en_cours = True
         app._vue_init_demarrage(cible)
-        app._acq_courante = acq = Acquisition(app.gp, app.gestion_init.nb_points)
+        # Init COM1/COM2 : TOUJOURS NB_POINTS (30) — indépendant de l'overlock X-série.
+        app._acq_courante = acq = Acquisition(app.gp, NB_POINTS)
 
         def on_pt(i, valeur, t, hr):
             app.after(0, lambda i=i, v=valeur, t=t, hr=hr: app._maj_init_pt(cible, i, v, t, hr))

@@ -19,7 +19,8 @@ class GestionInitialisation:
     def __init__(self, gestion_ports) -> None:
         self.gp           = gestion_ports
         self.nb_series:    int   = 5
-        self.nb_points:    int   = NB_POINTS   # points par série (overlock admin)
+        self.nb_points:    int   = NB_POINTS   # points par X-SÉRIE (overlock 2-50) ;
+        #                                        init/finale restent à NB_POINTS (30).
         self.distance_mm:  float = 0.0
 
         # ── État initialisation ───────────────────────────────────────────
@@ -148,11 +149,20 @@ class GestionInitialisation:
         logger.info("X = %d séries", x)
 
     def definir_nb_points(self, nb: int) -> int:
-        """Overlock : fixe le nombre de points par série, borné [MIN, MAX].
+        """Overlock : fixe le nombre de points PAR X-SÉRIE, borné [MIN, MAX].
+        N'affecte PAS l'init ni la mesure finale (fixées à NB_POINTS = 30).
         Retourne la valeur réellement appliquée (après encadrement)."""
         self.nb_points = max(NB_POINTS_MIN, min(int(nb), NB_POINTS_MAX))
-        logger.info("Nombre de points par série = %d (overlock)", self.nb_points)
+        logger.info("Points par X-série = %d (overlock ; init/finale restent %d)",
+                    self.nb_points, NB_POINTS)
         return self.nb_points
+
+    @property
+    def nb_points_feuille(self) -> int:
+        """Taille de la feuille Excel = max(30, points X-série).
+        La feuille doit contenir dans la MÊME mise en page les colonnes init/finale
+        (toujours 30 points) ET les colonnes X-série (2 à 50 points)."""
+        return max(NB_POINTS, self.nb_points)
 
     def definir_distance(self, distance_mm: float) -> None:
         if distance_mm < 0:

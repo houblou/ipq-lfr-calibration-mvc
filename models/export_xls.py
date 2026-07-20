@@ -15,11 +15,11 @@ Structure Excel:
 """
 import os
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional
 
 try:
     import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.styles import Font, PatternFill, Alignment
     OPENPYXL_OK = True
 except ImportError:
     OPENPYXL_OK = False

@@ -52,9 +52,10 @@ class GestionPorts:
         self._identites: Dict[str, str] = {}       # 'com1' -> 'HP3458A' (best-effort)
         self._cmd_mesure: Dict[str, str] = {}      # 'com1' -> 'READ?' (commande de mesure par rôle)
 
-        # Source du thermohygromètre : 'ascii' (trame "T=..,HR=.."), 'ruska'
-        # (RUSKA 2456-LEM, protocole binaire) ou 'manuel' (valeurs saisies).
-        self.thermo_mode: str = "ruska"
+        # Source du thermohygromètre : 'hart' (HART 1620, READ? -> CSV) par DÉFAUT
+        # (l'instrument de paillasse est toujours un Hart) ; 'ruska' (RUSKA 2456-LEM,
+        # binaire), 'ascii' (trame "T=..,HR=..") ou 'manuel' (valeurs saisies).
+        self.thermo_mode: str = "hart"
         self._thermo_manuel: Optional[Tuple[float, float]] = None
 
         self._backboard_actif: bool = False
@@ -178,8 +179,8 @@ class GestionPorts:
  
 
     def set_thermo_mode(self, mode: str) -> None:
-        """Choisit la source T/HR : 'ascii' | 'ruska' | 'manuel'."""
-        self.thermo_mode = mode if mode in ("ascii", "ruska", "manuel") else "ascii"
+        """Choisit la source T/HR : 'ascii' | 'ruska' | 'hart' | 'manuel'."""
+        self.thermo_mode = mode if mode in ("ascii", "ruska", "hart", "manuel") else "ascii"
         logger.info("Thermo mode = %s", self.thermo_mode)
 
     def set_thermo_manuel(self, t: float, hr: float) -> None:
@@ -407,6 +408,7 @@ class GestionPorts:
         """
         Lit T (°C) et HR (%) depuis Thermo1 selon `thermo_mode` :
           'manuel' -> valeurs saisies ; 'ruska' -> driver binaire RUSKA 2456-LEM ;
+          'hart'   -> HART 1620, READ? -> CSV brut "T,HR,T2,HR2" (sonde 1) ;
           'ascii'  -> trame ASCII "T=23.5,HR=48.2". Simule si mode_simulation.
         """
         if self.mode_simulation:
@@ -428,6 +430,42 @@ class GestionPorts:
             except Exception as exc:
                 logger.error("RUSKA read failed: %s", exc)
                 raise RuntimeError("RUSKA read failed.") from exc
+        if self.thermo_mode == "hart":
+            # HART 1620 — commande READ? (query). La réponse RÉELLE observée sur
+            # l'appareil est un enregistrement HORODATÉ :
+            #   "JJ/MM/AAAA HH:MM:SS, <T>, <HR>[, <T2>, <HR2>]"
+            # (le driver devices-hybrid supposait "T1,HR1,..." SANS horodatage —
+            # d'où l'échec réel `could not convert '01/12/2026 09:52:00'`). On lit
+            # donc la sonde 1 = les 2 premières valeurs NUMÉRIQUES ; l'horodatage
+            # (non numérique) est ignoré. Format brut que 'ascii' ne sait pas lire.
+            cmd = self._cmd_mesure.get("thermo1") or "READ?"
+            try:
+                with self._io_lock:   # C : sérialise l'I/O instrument
+                    if self._bus.get("thermo1") == "visa":
+                        ligne = self.thermo1.query(cmd).strip()
+                    else:
+                        if not self.thermo1.is_open:
+                            raise RuntimeError("Thermohygrometer is not connected.")
+                        self.thermo1.write((cmd + "\r\n").encode("ascii"))
+                        ligne = self.thermo1.readline().decode("ascii", errors="replace").strip()
+                # La réponse READ? du Hart 1620 commence par un HORODATAGE
+                # ("JJ/MM/AAAA HH:MM:SS"), suivi des valeurs numériques
+                # (T, HR, [T2, HR2]). On ignore les champs non numériques
+                # (l'horodatage) et on prend les 2 premières valeurs = sonde 1.
+                nombres = []
+                for champ in ligne.split(","):
+                    try:
+                        nombres.append(float(champ.strip()))
+                    except ValueError:
+                        continue
+                # E2 : pas de valeur fabriquée — si <2 valeurs numériques, on échoue
+                # (contexte métrologique : échouer plutôt que livrer une fausse mesure).
+                if len(nombres) < 2:
+                    raise ValueError(f"Réponse READ? sans 2 valeurs numériques : {ligne!r}")
+                return (nombres[0], nombres[1])
+            except Exception as exc:
+                logger.error("HART 1620 read failed: %s", exc)
+                raise RuntimeError("HART 1620 read failed.") from exc
         cmd = self._cmd_mesure.get("thermo1", "READ?")   # mode ASCII (placeholder générique)
         try:
             with self._io_lock:   # C : sérialise l'I/O instrument

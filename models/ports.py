@@ -183,6 +183,47 @@ class GestionPorts:
         self.thermo_mode = mode if mode in ("ascii", "ruska", "hart", "manuel") else "ascii"
         logger.info("Thermo mode = %s", self.thermo_mode)
 
+    def detecter_source_thermo(self) -> str:
+        """Auto-détecte le thermohygromètre branché et fixe `thermo_mode`.
+
+        Rend l'app ADAPTABLE : peu importe lequel des deux est présent, on essaie
+        les protocoles RÉELS et on retient le premier qui rend une mesure valide.
+        L'ordre dépend du bus (leurs drivers sont incompatibles entre bus) :
+          - port VISA (ASRL)     -> HART 1620 (READ? -> trame thermo plausible) ;
+          - port série pyserial  -> RUSKA 2456-LEM (binaire) PUIS HART (repli).
+        Chaque essai a son propre garde-fou (Hart : plausibilité ; RUSKA : checksum).
+        Renvoie 'hart' | 'ruska', ou '' si rien détecté (mode courant conservé)."""
+        if self.mode_simulation:
+            return self.thermo_mode
+        if self.thermo1 is None:
+            return ""
+        est_visa = self._bus.get("thermo1") == "visa"
+
+        def _essai_hart():
+            with self._io_lock:
+                return self._lire_hart()
+
+        def _essai_ruska():
+            from models import thermo_ruska
+            with self._io_lock:
+                t, hr, _pression = thermo_ruska.lire(self.thermo1)
+            return t, hr
+
+        # RUSKA (binaire, pyserial) uniquement sur un port série ; HART sur les deux.
+        ordre = ([("hart", _essai_hart)] if est_visa
+                 else [("ruska", _essai_ruska), ("hart", _essai_hart)])
+        for mode, essai in ordre:
+            try:
+                t, hr = essai()
+            except Exception:
+                continue
+            self.thermo_mode = mode
+            logger.info("Thermo auto-détecté : %s  (T=%.2f °C, HR=%.2f %%)", mode.upper(), t, hr)
+            return mode
+        logger.warning("Thermo non auto-détecté (ni HART ni RUSKA) — mode conservé : %s",
+                       self.thermo_mode)
+        return ""
+
     def set_thermo_manuel(self, t: float, hr: float) -> None:
         """Fixe les valeurs T/HR saisies manuellement (mode 'manuel')."""
         self._thermo_manuel = (float(t), float(hr))
@@ -235,7 +276,23 @@ class GestionPorts:
             inst.write_termination = "\n"
             inst.read_termination = "\n"
             inst.send_end = True
+            # Port série (ASRL, ex. le Hart) : cadrage 9600 8N1 EXPLICITE (comme le
+            # driver devices.py ; un baud résiduel faux garble les octets), puis
+            # clear() pour repartir d'un buffer propre (le Hart écho/désynchronise).
+            if adresse.upper().startswith("ASRL"):
+                try:
+                    inst.baud_rate = 9600
+                    inst.data_bits = 8
+                    inst.parity = pyvisa.constants.Parity.none
+                    inst.stop_bits = pyvisa.constants.StopBits.one
+                except Exception:
+                    pass
             idn = self._identifier_visa(inst)   # identité propre (best-effort, ID? pour le 3458A)
+            if adresse.upper().startswith("ASRL"):
+                try:
+                    inst.clear()   # vide l'écho/pollution de l'identification avant la 1re mesure
+                except Exception:
+                    pass
             with self._verrou:                  # T1 : publication de l'état sous verrou
                 setattr(self, cible, inst)
                 self._bus[cible] = "visa"
@@ -404,6 +461,71 @@ class GestionPorts:
     def get_noms_appareils(self) -> Dict[str, str]:
         return dict(self.noms_appareils)
 
+    def _lire_hart(self) -> Tuple[float, float]:
+        """Lecture ROBUSTE du HART 1620 (à appeler SOUS _io_lock).
+
+        La liaison série du Hart ÉCHOE les commandes et se DÉSYNCHRONISE : elle
+        mêle réponses à READ?, écho de la commande et trames de journal horodatées,
+        et peut GARBLER les octets ('HART' -> 'REHAR') sur certaines liaisons. On :
+          1. vide le buffer de lecture (écarte écho/journal en attente) ;
+          2. envoie READ? et SAUTE l'écho de la commande ;
+          3. parse les 2 premières valeurs numériques = sonde 1 (T, HR) ;
+          4. n'accepte qu'une valeur PHYSIQUEMENT PLAUSIBLE — jamais une trame
+             garblée qui parserait quand même en nombres (garde-fou métrologie) ;
+          5. relit sinon (jusqu'à 4 fois) ; si le Hart est muet, on abandonne vite.
+        Approche validée au banc (cf. diag_hart)."""
+        cmd = self._cmd_mesure.get("thermo1") or "READ?"
+        est_visa = self._bus.get("thermo1") == "visa"
+        if not est_visa and not self.thermo1.is_open:
+            raise RuntimeError("Thermohygrometer is not connected.")
+        derniere = ""
+        for _essai in range(4):
+            if est_visa and PYVISA_DISPONIBLE:
+                try:
+                    self.thermo1.flush(pyvisa.constants.BufferOperation.discard_read_buffer_no_io)
+                except Exception:
+                    pass
+            elif not est_visa:
+                try:
+                    self.thermo1.reset_input_buffer()   # série pyserial : même idée
+                except Exception:
+                    pass
+            ligne = ""
+            lecture_ok = False
+            if est_visa:
+                self.thermo1.write(cmd)
+            else:
+                self.thermo1.write((cmd + "\r\n").encode("ascii"))
+            for _lecture in range(3):
+                try:
+                    if est_visa:
+                        ligne = self.thermo1.read().strip()
+                    else:
+                        ligne = self.thermo1.readline().decode("ascii", errors="replace").strip()
+                except Exception:
+                    break   # timeout -> Hart muet cette tentative
+                lecture_ok = True
+                if ligne and ligne.upper() != cmd.upper():   # saute l'écho de la commande
+                    break
+            if not lecture_ok:
+                break   # Hart totalement muet -> inutile de réessayer
+            derniere = ligne
+            nombres = []
+            for champ in ligne.split(","):
+                try:
+                    nombres.append(float(champ.strip()))
+                except ValueError:
+                    continue
+            # Garde-fou métrologie : HR borné [0,100] (borne physique dure), T large
+            # pour ne pas rejeter une vraie lecture. Rejette 'REHAR,620,...' -> 620 °C.
+            if (len(nombres) >= 2
+                    and -100.0 <= nombres[0] <= 300.0
+                    and 0.0 <= nombres[1] <= 100.0):
+                return nombres[0], nombres[1]
+        # E2 : jamais de valeur fabriquée/garblée — on échoue proprement.
+        raise ValueError(
+            f"Aucune trame HART plausible (echo/desync/garble ; derniere : {derniere!r})")
+
     def lire_thermo(self) -> Tuple[float, float]:
         """
         Lit T (°C) et HR (%) depuis Thermo1 selon `thermo_mode` :
@@ -431,38 +553,9 @@ class GestionPorts:
                 logger.error("RUSKA read failed: %s", exc)
                 raise RuntimeError("RUSKA read failed.") from exc
         if self.thermo_mode == "hart":
-            # HART 1620 — commande READ? (query). La réponse RÉELLE observée sur
-            # l'appareil est un enregistrement HORODATÉ :
-            #   "JJ/MM/AAAA HH:MM:SS, <T>, <HR>[, <T2>, <HR2>]"
-            # (le driver devices-hybrid supposait "T1,HR1,..." SANS horodatage —
-            # d'où l'échec réel `could not convert '01/12/2026 09:52:00'`). On lit
-            # donc la sonde 1 = les 2 premières valeurs NUMÉRIQUES ; l'horodatage
-            # (non numérique) est ignoré. Format brut que 'ascii' ne sait pas lire.
-            cmd = self._cmd_mesure.get("thermo1") or "READ?"
             try:
                 with self._io_lock:   # C : sérialise l'I/O instrument
-                    if self._bus.get("thermo1") == "visa":
-                        ligne = self.thermo1.query(cmd).strip()
-                    else:
-                        if not self.thermo1.is_open:
-                            raise RuntimeError("Thermohygrometer is not connected.")
-                        self.thermo1.write((cmd + "\r\n").encode("ascii"))
-                        ligne = self.thermo1.readline().decode("ascii", errors="replace").strip()
-                # La réponse READ? du Hart 1620 commence par un HORODATAGE
-                # ("JJ/MM/AAAA HH:MM:SS"), suivi des valeurs numériques
-                # (T, HR, [T2, HR2]). On ignore les champs non numériques
-                # (l'horodatage) et on prend les 2 premières valeurs = sonde 1.
-                nombres = []
-                for champ in ligne.split(","):
-                    try:
-                        nombres.append(float(champ.strip()))
-                    except ValueError:
-                        continue
-                # E2 : pas de valeur fabriquée — si <2 valeurs numériques, on échoue
-                # (contexte métrologique : échouer plutôt que livrer une fausse mesure).
-                if len(nombres) < 2:
-                    raise ValueError(f"Réponse READ? sans 2 valeurs numériques : {ligne!r}")
-                return (nombres[0], nombres[1])
+                    return self._lire_hart()
             except Exception as exc:
                 logger.error("HART 1620 read failed: %s", exc)
                 raise RuntimeError("HART 1620 read failed.") from exc

@@ -191,7 +191,6 @@ class TestInterfaceVue(unittest.TestCase):
         "_vue_admin_deverrouille", "_vue_admin_verrouille", "_vue_simulation",
         "_vue_cle_configuree", "_vue_audit_resultat", "_actualiser_btn_sim",
         "_vue_ports_disponibles", "_vue_port_ok", "_vue_port_echec",
-        "_vue_detect_indispo", "_vue_detect_scan", "_vue_detection",
         "_vue_operateur", "_vue_connexion_ok",
         "_log", "_badge", "_statut", "_naviguer", "after",
     ]

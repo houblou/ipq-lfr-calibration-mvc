@@ -81,8 +81,6 @@ class ApplicationIPQ(tk.Tk):
         self._arret_finale = False  # intention d'arrêt de la mesure finale (fenêtre de course)
         self._vue_active = None
         self._nav_btns = {}
-        self._detect_scanning = False
-        self._spin_i = 0
 
         # COM mesuré pendant les X séries uniquement (l'init n'est pas concernée).
         # Par défaut COM1. L'autre COM n'est pas lu pendant le mesurage.
@@ -461,12 +459,8 @@ class ApplicationIPQ(tk.Tk):
             btn(row, "Connect", command=lambda n=nom: self._connecter_port(n), padx=10, pady=3).pack(side="right", padx=(0, 8))
 
         row_btns = tk.Frame(c_ports, bg=C["bg_card"])
-        row_btns.pack(fill="x", padx=14, pady=(8, 4))
+        row_btns.pack(fill="x", padx=14, pady=(8, 12))
         btn_noir(row_btns, "↻   Refresh ports", command=self._rafraichir_ports, padx=12, pady=7).pack(side="left")
-        self._btn_detect = btn_noir(row_btns, "⌖   Auto-detect", command=self._auto_detecter, padx=12, pady=7)
-        self._btn_detect.pack(side="left", padx=(8, 0))
-        self.lbl_detect = lbl(c_ports, "", FONT_SMALL, C["txt_muted"], C["bg_card"])
-        self.lbl_detect.pack(anchor="w", padx=14, pady=(6, 12))
 
         # ── Source ambiante (T / RH) ──────────────────────────────────────
         c_th = card(inner)
@@ -786,9 +780,6 @@ class ApplicationIPQ(tk.Tk):
             self.gp.set_thermo_manuel(t, hr)
         self._log(f"Ambient source: {libelle}", "ok")
 
-    def _auto_detecter(self) -> None:
-        self._ctrl_connexion.auto_detecter()
-
     def _valider_connexion(self) -> None:
         self._ctrl_connexion.valider()
 
@@ -809,48 +800,6 @@ class ApplicationIPQ(tk.Tk):
     def _vue_port_echec(self, cible: str, msg: str) -> None:
         self._port_labels[cible].configure(fg=C["txt_red"])
         self._log(msg, "err")
-
-    def _vue_detect_indispo(self) -> None:
-        self.lbl_detect.configure(text="pyserial required for auto-detect.", fg=C["txt_red"])
-
-    def _spin_detect(self) -> None:
-        """Anime l'icône du bouton Auto-detect pendant le scan (cycle de glyphes)."""
-        frames = ("◐", "◓", "◑", "◒")
-        if not self._detect_scanning:
-            if hasattr(self, "_btn_detect"):
-                self._btn_detect.configure(text="⌖   Auto-detect")
-            return
-        self._spin_i = (self._spin_i + 1) % len(frames)
-        self._btn_detect.configure(text=f"{frames[self._spin_i]}   Scanning…")
-        self.after(120, self._spin_detect)
-
-    def _vue_detect_scan(self) -> None:
-        self.lbl_detect.configure(text="Scanning ports…", fg=C["txt_amber"])
-        for nom in ("com1", "com2", "thermo1"):
-            self._port_labels[nom].configure(fg=C["txt_muted"])
-        self._detect_scanning = True
-        self._spin_detect()
-
-    def _vue_detection(self, data: dict) -> None:
-        self._detect_scanning = False
-        if hasattr(self, "_btn_detect"):
-            self._btn_detect.configure(text="⌖   Auto-detect")
-        mapping = data.get("mapping", {})
-        detections = data.get("detections", [])
-        for cible in ("com1", "com2", "thermo1"):
-            dot = self._port_labels[cible]
-            if cible in mapping:
-                self._port_vars[cible].set(mapping[cible]["port"])
-                dot.configure(fg=C["txt_green"])
-            else:
-                dot.configure(fg=C["txt_red"])
-        if detections:
-            noms = ", ".join(f"{d['instrument']} @ {d['port']}" for d in detections)
-            self.lbl_detect.configure(text=f"{len(detections)} detected — {noms}", fg=C["txt_green"])
-            self._log(f"Auto-detect: {noms}", "ok")
-        else:
-            self.lbl_detect.configure(text="No instrument detected.", fg=C["txt_red"])
-            self._log("Auto-detect: no instrument found.", "err")
 
     def _vue_operateur(self, operateur: str) -> None:
         self.var_operateur.set(f"👤  {operateur}")
@@ -883,8 +832,8 @@ class ApplicationIPQ(tk.Tk):
         self.progress_statut.configure(maximum=self.gestion_init.nb_points)
         self.progress_statut["value"] = i
         self._monitor.on_init_point(cible, i, valeur, t, hr)
-        self.var_t.set(f"T: {t:.1f} °C")
-        self.var_hr.set(f"RH: {hr:.1f} %")
+        self.var_t.set(f"T: {t:g} °C")
+        self.var_hr.set(f"RH: {hr:g} %")
 
     # ── Vue Init (mise à jour des widgets, pilotée par InitController) ─────────
 

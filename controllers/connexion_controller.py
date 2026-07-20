@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """controllers/connexion_controller.py — connexion instruments + création de session Excel (sans widgets)."""
 import os
-import threading
-import time
 
 from models.export_xls import ExportXLS
 from models.audit import EV_CONNEXION, EV_EXPORT_EXCEL, EV_ERREUR
@@ -28,66 +26,21 @@ class ConnexionController:
             return
         if app.gp.connecter(port, cible):   # bus auto : COMx -> série, GPIB… -> VISA
             app._vue_port_ok(cible, port)
+            if cible == "thermo1":
+                # Auto-adaptation : détecte Hart 1620 ou RUSKA 2456-LEM et fixe le mode.
+                mode = app.gp.detecter_source_thermo()
+                libelles = {"hart": "Hart 1620", "ruska": "RUSKA 2456-LEM"}
+                if mode in libelles:
+                    app.var_thermo_source.set(libelles[mode])
+                    app._log(f"Ambient source auto-detected: {libelles[mode]}", "ok")
+                else:
+                    app._log("Ambient source not auto-detected — select it manually.", "err")
             if not app.gp.backboard_actif:
                 app.gp.demarrer_backboard(
                     callback_erreur=lambda m: app.after(0, lambda: app._log(f"⚠ {m}", "err")))
         else:
             errs = app.gp.get_erreurs()
             app._vue_port_echec(cible, errs[-1] if errs else "Connection failed.")
-
-    def auto_detecter(self) -> None:
-        app = self.app
-        try:
-            import models.detection as detect_com
-        except Exception as exc:
-            detect_com = None
-            app._log(f"Serial auto-detect unavailable: {exc}", "err")
-        app._vue_detect_scan()
-
-        def _run():
-            # Scan série (si pyserial dispo), borné à 5 s au total : sondes rapides
-            # (0.4 s) + deadline absolu → l'Auto-detect ne tourne jamais plus de 5 s.
-            # try/finally : _appliquer est TOUJOURS appelé (arrête le spinner et
-            # repeuple les menus), même en cas d'erreur → jamais de blocage.
-            data = {"mapping": {}, "detections": []}
-            try:
-                if detect_com is not None and getattr(detect_com, "PYSERIAL_OK", False):
-                    data = detect_com.detecter(timeout=0.3, deadline=time.time() + 4.0)
-                data = self._completer_avec_visa(data)
-            except Exception as exc:
-                app.after(0, lambda e=str(exc): app._log(f"Auto-detect error: {e}", "err"))
-            finally:
-                app.after(0, lambda: self._appliquer(data))
-
-        threading.Thread(target=_run, daemon=True, name="thread-detect").start()
-
-    def _completer_avec_visa(self, data: dict) -> dict:
-        """Rend l'Auto-detect GPIB-aware : affecte les ressources VISA aux rôles multimètres libres."""
-        gp = self.app.gp
-        try:
-            # Seuls les vrais bus instruments (GPIB/USB) vont aux rôles multimètres ;
-            # ASRL* = un port série vu en VISA (ex. le thermo), à ne pas affecter ici.
-            ressources = [r for r in gp.lister_ressources_visa()
-                          if r.upper().startswith(("GPIB", "USB"))]
-        except Exception:
-            ressources = []
-        mapping = dict(data.get("mapping", {}))
-        detections = list(data.get("detections", []))
-        libres = [c for c in ("com1", "com2") if c not in mapping]
-        for adresse in ressources:
-            if not libres:
-                break
-            cible = libres.pop(0)
-            mapping[cible] = {"port": adresse}
-            detections.append({"instrument": adresse, "port": adresse})
-        data = dict(data)
-        data["mapping"] = mapping
-        data["detections"] = detections
-        return data
-
-    def _appliquer(self, data: dict) -> None:
-        self.rafraichir_ports()
-        self.app._vue_detection(data)
 
     def valider(self) -> None:
         app = self.app

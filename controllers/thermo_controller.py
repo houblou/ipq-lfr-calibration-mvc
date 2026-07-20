@@ -26,7 +26,10 @@ class ThermoController:
         self._var_hr.set(txt_hr)
 
     def _on_mesure(self, t, hr) -> None:
-        self._win.after(0, lambda: self._afficher(f"T: {t:.1f} °C", f"RH: {hr:.1f} %"))
+        # :g = précision réelle de l'instrument (Hart 1620 : 4 chiffres, ex. 25.67),
+        # sans arrondi à 1 décimale (qui masquait aussi les petites variations →
+        # « mauvaise actualisation ») et sans zéros de remplissage.
+        self._win.after(0, lambda: self._afficher(f"T: {t:g} °C", f"RH: {hr:g} %"))
 
     def _on_indispo(self) -> None:
         self._win.after(0, lambda: self._afficher("T: — °C", "RH: — %"))

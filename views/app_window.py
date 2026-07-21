@@ -23,8 +23,11 @@ from controllers.admin_controller import AdminController
 from controllers.connexion_controller import ConnexionController
 from models.security import admin_key_configured
 from models.audit import JournalAudit, EV_ARRET
+from core.txt_help import help_quickstart, help_instruments, help_troubleshooting
 
 logger = creer_logger("ui")
+
+APP_VERSION = "1.2.7"
 
 # ── Charte graphique (palette claire + helpers) ─────────────────────────────────
 # La palette et les fabriques de widgets vivent désormais dans views/theme.py.
@@ -33,6 +36,7 @@ from views.theme import (
     FONT,
     FONT_SMALL,
     FONT_BOLD,
+    FONT_TITLE,
     FONT_LABEL,
     FONT_MONO,
     ACCENT_VIOLET,
@@ -43,6 +47,7 @@ from views.theme import (
     card,
     btn,
     btn_noir,
+    btn_ghost,
     btn_accent,
     section_title,
     champ_saisie,
@@ -162,6 +167,7 @@ class ApplicationIPQ(tk.Tk):
     # ══════════════════════════════════════════════════════════════════════════
 
     def _construire_layout(self) -> None:
+
         self.frame_sidebar = tk.Frame(self, bg=C["bg_sidebar"], width=210)
         self.frame_sidebar.pack(side="left", fill="y")
         self.frame_sidebar.pack_propagate(False)
@@ -208,7 +214,7 @@ class ApplicationIPQ(tk.Tk):
         sb = self.frame_sidebar
 
         # Logo
-        logo = tk.Frame(sb, bg=C["bg_sidebar"])
+        logo = tk.Frame(sb, bg=C["bg_sidebar"], height=64)
         logo.pack(fill="x", padx=16, pady=(18, 12))
         tk.Label(logo, text="IPQ / LFR", font=("Segoe UI", 9, "bold"), fg=C["txt_muted"], bg=C["bg_sidebar"]).pack(anchor="w")
         tk.Label(logo, text="Photometer Calibration", font=("Segoe UI", 10), fg=C["txt_secondary"], bg=C["bg_sidebar"], wraplength=180, justify="left").pack(anchor="w", pady=(2, 0))
@@ -228,14 +234,13 @@ class ApplicationIPQ(tk.Tk):
             (
                 "MEASUREMENT",
                 [
-                    ("init", "2-  Initialization"),
-                    ("calibration", "3-  start measurement"),
+                    ("calibration", "2-  start measurement"),
                 ],
             ),
             (
                 "DATA",
                 [
-                    ("resultats", "4-  Results table & export"),
+                    ("resultats", "3-  Results table"),
                     ("acquisition", "live result"),
                     ("journal", "Event log"),
                 ],
@@ -333,8 +338,50 @@ class ApplicationIPQ(tk.Tk):
             padx=8,
         )
 
-        # menue help
-        Menu(tb, tearoff=0)
+        # Menu Help : bouton IMAGE (pilule violette, 3 états) — repos / survol / actif.
+        # Les 3 PNG (coins arrondis + chevron de liste déroulante) sont dans views/assets.
+        # Repli texte si les images sont absentes (aucune dépendance dure à l'asset).
+        assets = os.path.join(os.path.dirname(__file__), "assets")
+        self._help_hovered = False
+        try:
+            self._img_help_normal = tk.PhotoImage(file=os.path.join(assets, "help_normal.png"))
+            self._img_help_hover = tk.PhotoImage(file=os.path.join(assets, "help_hover.png"))
+            self._img_help_active = tk.PhotoImage(file=os.path.join(assets, "help_active.png"))
+        except tk.TclError:
+            self._img_help_normal = self._img_help_hover = self._img_help_active = None
+        if self._img_help_normal is not None:
+            self.btn_help = tk.Button(
+                tb,
+                image=self._img_help_normal,
+                command=self._ouvrir_menu_help,
+                bd=0,
+                relief="flat",
+                highlightthickness=0,
+                takefocus=0,
+                cursor="hand2",
+                bg=C["bg_topbar"],
+                activebackground=C["bg_topbar"],
+            )
+            self.btn_help.bind("<Enter>", lambda _e: self._maj_help_image(True))
+            self.btn_help.bind("<Leave>", lambda _e: self._maj_help_image(False))
+        else:
+            self.btn_help = btn(tb, "Help", command=self._ouvrir_menu_help, color=C["bg_active"], fgcolor=C["txt_active"], font=FONT_SMALL, padx=10, pady=2)
+        self.btn_help.pack(side="left", pady=6, padx=(4, 0))
+        self.menu_help = Menu(
+            tb,
+            tearoff=0,
+            bd=0,
+            font=FONT_SMALL,
+            bg=C["bg_card"],
+            fg=C["txt_primary"],
+            activebackground=C["bg_active"],
+            activeforeground=C["txt_active"],
+        )
+        self.menu_help.add_command(label="Quick start guide", command=lambda: self._naviguer("help_quickstart"))
+        self.menu_help.add_command(label="Instruments and wiring", command=lambda: self._naviguer("help_instruments"))
+        self.menu_help.add_command(label="Troubleshooting and FAQ", command=lambda: self._naviguer("help_troubleshooting"))
+        self.menu_help.add_separator()
+        self.menu_help.add_command(label="About and version", command=lambda: self._naviguer("help"))
 
         self.lbl_admin_verrou.pack(side="left", pady=6)
         self.lbl_admin_verrou.bind("<Button-1>", lambda _: self._naviguer("admin"))
@@ -393,14 +440,22 @@ class ApplicationIPQ(tk.Tk):
 
     def _construire_vues(self) -> None:
         self._monitor = MonitorTab(self.frame_content, bg=C["bg_app"])
+        # Init + Mesure fusionnés en UNE vue numérotée (procédure étape par étape).
+        # Les deux entrées historiques de la sidebar pointent vers cette même vue —
+        # la sidebar reste à consolider côté utilisateur.
+        vue_mesure = self._vue_mesure_complete()
         self._vues = {
             "connexion": self._vue_connexion(),
-            "init": self._vue_init(),
+            "init": vue_mesure,
             "acquisition": self._monitor,
-            "calibration": self._vue_calibration(),
+            "calibration": vue_mesure,
             "resultats": self._vue_resultats(),
             "journal": self._vue_journal(),
             "admin": self._vue_admin(),
+            "help": self._vue_help(),
+            "help_quickstart": self._vue_help_quickstart(),
+            "help_instruments": self._vue_help_instruments(),
+            "help_troubleshooting": self._vue_help_troubleshooting(),
         }
 
     # ── Vue : Connexion ───────────────────────────────────────────────────────
@@ -491,19 +546,32 @@ class ApplicationIPQ(tk.Tk):
         self._rafraichir_ports()
         return f
 
-    # ── Vue : Acquisition ─────────────────────────────────────────────────────
-
     # ── Vue : Initialisation ──────────────────────────────────────────────────
 
-    def _vue_init(self) -> tk.Frame:
+    def _etape(self, parent, num: int, titre: str, sous: str = "") -> None:
+        """En-tête d'étape : titre simplement numéroté « N-  … » (comme la sidebar),
+        sous-titre en dessous. Pas de pastille — plus simple et plus direct à lire."""
+        wrap = tk.Frame(parent, bg=C["bg_app"])
+        wrap.pack(fill="x", padx=20, pady=(24, 8))
+        lbl(wrap, f"{num}-  {titre}", FONT_TITLE, C["txt_primary"], C["bg_app"]).pack(anchor="w")
+        if sous:
+            lbl(wrap, sous, FONT_SMALL, C["txt_primary"], C["bg_app"]).pack(anchor="w", pady=(3, 0))
+
+    def _vue_mesure_complete(self) -> tk.Frame:
+        """Vue UNIQUE et numérotée regroupant l'ancienne page Init et la page Calibration.
+        Procédure étape par étape (1 distance → 2 init → 3 réglages → 4 lancer) pour des
+        utilisateurs peu à l'aise avec l'appli. Tous les widgets/variables des deux vues
+        d'origine sont conservés à l'identique (les contrôleurs les utilisent tels quels)."""
         f = tk.Frame(self.frame_content, bg=C["bg_app"])
         scroll = _ScrollFrame(f)
         scroll.pack(fill="both", expand=True)
         inner = scroll.inner
 
-        # ── Paramètre Distance ────────────────────────────────────────────
-        _section_title(inner, "Photometric bench")
+        _section_title(inner, "Measurement — follow the steps in order")
+        lbl(inner, "Create the session on the Connection page first, then complete steps 1 to 4 below.", FONT_SMALL, C["txt_muted"], C["bg_app"]).pack(anchor="w", padx=20, pady=(0, 2))
 
+        # ══ ÉTAPE 1 — Distance ════════════════════════════════════════════
+        self._etape(inner, 1, "Bench distance", "Lamp-to-sensor distance, exported with every series")
         c_dist = card(inner)
         c_dist.pack(fill="x", padx=20, pady=(0, 12))
         grid_d = tk.Frame(c_dist, bg=C["bg_card"])
@@ -511,20 +579,15 @@ class ApplicationIPQ(tk.Tk):
         lbl(grid_d, "Lamp-to-sensor distance (mm):", FONT, C["txt_secondary"], C["bg_card"]).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=5)
         self.var_distance = tk.StringVar(value="0.0")
         _entry_dark(grid_d, self.var_distance, width=14).grid(row=0, column=1, sticky="w", pady=5)
-        lbl(c_dist, "This value is exported with every series.", FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(anchor="w", padx=14, pady=(0, 12))
 
-        # ── Section Initialisation ────────────────────────────────────────
-        _section_title(inner, "Initialization — 2 × 30 points")
-
+        # ══ ÉTAPE 2 — Initialisation ══════════════════════════════════════
+        self._etape(inner, 2, "Initialization — UR and UL", "30 points each, then approve")
         self._build_init_card(inner, "com1")
         self._build_init_card(inner, "com2")
-
-        # Bouton Valider (désactivé tant que COM1 ET COM2 ne sont pas faits)
         c_val = card(inner)
-        c_val.pack(fill="x", padx=20, pady=(0, 20))
+        c_val.pack(fill="x", padx=20, pady=(0, 12))
         val_inner = tk.Frame(c_val, bg=C["bg_card"])
         val_inner.pack(padx=14, pady=14, fill="x")
-
         self.lbl_val_hint = lbl(
             val_inner,
             f"Run both {label_multimetre('com1')} and {label_multimetre('com2')} initialization before approval.",
@@ -533,7 +596,6 @@ class ApplicationIPQ(tk.Tk):
             C["bg_card"],
         )
         self.lbl_val_hint.pack(anchor="w", pady=(0, 8))
-
         self.btn_valider_init = btn(
             val_inner,
             "✔  Approve initialization",
@@ -545,6 +607,99 @@ class ApplicationIPQ(tk.Tk):
         )
         self.btn_valider_init.configure(state="disabled")
         self.btn_valider_init.pack(anchor="w")
+
+        # ══ ÉTAPE 3 — Réglages de mesure ══════════════════════════════════
+        self._etape(inner, 3, "Measurement settings", "Multimeter, number of series, points per series")
+        c_sel = card(inner)
+        c_sel.pack(fill="x", padx=20, pady=(0, 12))
+        row_sel = tk.Frame(c_sel, bg=C["bg_card"])
+        row_sel.pack(anchor="w", padx=14, pady=(12, 8))
+        lbl(row_sel, "Measuring multimeter:", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(side="left", padx=(0, 12))
+        self._btn_com1 = btn(row_sel, label_multimetre("com1"), command=lambda: self.var_com_mesure.set("com1"), color=C["bg_input"], fgcolor=C["txt_secondary"], padx=14, pady=6)
+        self._btn_com1.pack(side="left", padx=(0, 6))
+        self._btn_com2 = btn(row_sel, label_multimetre("com2"), command=lambda: self.var_com_mesure.set("com2"), color=C["bg_input"], fgcolor=C["txt_secondary"], padx=14, pady=6)
+        self._btn_com2.pack(side="left")
+        lbl(c_sel, "Select the multimeter to read", FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(anchor="w", padx=14, pady=(0, 12))
+        self._maj_boutons_com()
+
+        c = card(inner)
+        c.pack(fill="x", padx=20, pady=(0, 12))
+        grid = tk.Frame(c, bg=C["bg_card"])
+        grid.pack(padx=14, pady=14)
+        lbl(grid, "Number of series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=6)
+        self.var_nb_series = tk.IntVar(value=5)
+        tk.Spinbox(
+            grid,
+            from_=1,
+            to=99,
+            textvariable=self.var_nb_series,
+            width=6,
+            font=FONT,
+            bg=C["bg_input"],
+            fg=C["txt_primary"],
+            buttonbackground=C["bg_hover"],
+            relief="flat",
+            bd=1,
+            highlightbackground=C["border_light"],
+            highlightthickness=1,
+        ).grid(row=0, column=1, sticky="w", pady=6)
+        lbl(grid, "Wait between series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=1, column=0, sticky="e", padx=(0, 10), pady=6)
+        self.var_attente_s = tk.IntVar(value=60)
+        tk.Spinbox(
+            grid,
+            from_=0,
+            to=600,
+            increment=5,
+            textvariable=self.var_attente_s,
+            width=6,
+            font=FONT,
+            bg=C["bg_input"],
+            fg=C["txt_primary"],
+            buttonbackground=C["bg_hover"],
+            relief="flat",
+            bd=1,
+            highlightbackground=C["border_light"],
+            highlightthickness=1,
+        ).grid(row=1, column=1, sticky="w", pady=6)
+        lbl(grid, "Beeps 1/s play during the wait", FONT_SMALL, C["txt_muted"], C["bg_card"]).grid(row=1, column=2, sticky="w", padx=(10, 0), pady=6)
+        lbl(grid, "Points per series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
+        self.var_nb_points = tk.IntVar(value=self.gestion_init.nb_points)
+        tk.Spinbox(
+            grid,
+            from_=NB_POINTS_MIN,
+            to=NB_POINTS_MAX,
+            textvariable=self.var_nb_points,
+            width=6,
+            font=FONT,
+            bg=C["bg_input"],
+            fg=C["txt_primary"],
+            buttonbackground=C["bg_hover"],
+            relief="flat",
+            bd=1,
+            highlightbackground=C["border_light"],
+            highlightthickness=1,
+        ).grid(row=2, column=1, sticky="w", pady=6)
+        lbl(grid, f"Init/final stay {NB_POINTS} · sets the Excel sheet size", FONT_SMALL, C["txt_muted"], C["bg_card"]).grid(row=2, column=2, sticky="w", padx=(10, 0), pady=6)
+
+        # ══ ÉTAPE 4 — Lancer la mesure ════════════════════════════════════
+        self._etape(inner, 4, "Run the measurement", "START the series, then the final measurement")
+        c_run = card(inner)
+        c_run.pack(fill="x", padx=20, pady=(0, 10))
+        self.lbl_serie_status = lbl(c_run, "Series — / —", FONT_BOLD, C["txt_blue"], C["bg_card"])
+        self.lbl_serie_status.pack(anchor="w", padx=14, pady=(12, 0))
+        self.progress_cal = ttk.Progressbar(c_run, length=100, maximum=5, mode="determinate", style="Green.Horizontal.TProgressbar")
+        self.progress_cal.pack(fill="x", padx=14, pady=(6, 14))
+
+        btn_cal_row = tk.Frame(inner, bg=C["bg_app"])
+        btn_cal_row.pack(anchor="w", padx=20, pady=(0, 26))
+        self.btn_cal_start = btn(btn_cal_row, "START", command=self._lancer_calibration, color=ACCENT_GREEN, fgcolor="#ffffff", padx=18, pady=8)
+        self.btn_cal_start.configure(activebackground=ACCENT_GREEN, activeforeground="#ffffff")
+        self.btn_cal_start.pack(side="left", padx=(0, 8))
+        self.btn_cal_stop = btn_ghost(btn_cal_row, "STOP", command=self._arreter_calibration, fg=C["txt_red"], border=ACCENT_RED, padx=16, pady=8)
+        self.btn_cal_stop.configure(state="disabled")
+        self.btn_cal_stop.pack(side="left")
+        self.btn_final = btn_ghost(btn_cal_row, "⧉  Final measurement", command=self._mesure_finale, fg=C["txt_primary"], border=C["border_light"], padx=16, pady=8)
+        self.btn_final.pack(side="left", padx=(8, 0))
 
         return f
 
@@ -577,28 +732,30 @@ class ApplicationIPQ(tk.Tk):
             setattr(self, attr, var)
             tk.Label(sub, textvariable=var, font=("Segoe UI", 13, "bold"), fg=C["txt_blue"], bg=C["bg_card"]).pack(anchor="w")
         pady_btn = (0, 4) if cible == "com1" else (0, 12)
-        btn_noir(c, f"▶   Run {label} initialization", command=lambda ci=cible: self._lancer_init(ci), padx=12, pady=6).pack(anchor="w", padx=14, pady=pady_btn)
+        b_run = btn(c, f"▶   Run {label} initialization", command=lambda ci=cible: self._lancer_init(ci), color=C["bg_active"], fgcolor=C["txt_active"], padx=14, pady=7)
+        b_run.pack(anchor="w", padx=14, pady=pady_btn)
         if cible == "com1":
             b_seq = btn(
                 c,
-                f"⏩   Initialize {label_multimetre('com1')} then {label_multimetre('com2')} automatically",
+                f"Initialize {label_multimetre('com1')} then {label_multimetre('com2')} automatically",
                 command=self._lancer_init_sequentielle,
-                color=C["bg_card"],
+                color=C["bg_hover"],
                 fgcolor=C["txt_secondary"],
                 padx=12,
-                pady=5,
+                pady=6,
             )
             b_seq.configure(highlightbackground=C["border_light"], highlightthickness=1)
             b_seq.pack(anchor="w", padx=14, pady=(0, 12))
 
     def _maj_boutons_com(self) -> None:
-        """Boutons COM1/COM2 : exclusifs, tous deux verts (plein = mesuré, contour = dispo)."""
+        """Boutons COM1/COM2 : exclusifs. Sélectionné = teinte verte claire + bordure ;
+        disponible = neutre discret. Plus léger qu'un aplat vert plein."""
         sel = self.var_com_mesure.get() or "com1"
         for com, b in (("com1", self._btn_com1), ("com2", self._btn_com2)):
             if com == sel:
-                b.configure(bg=ACCENT_GREEN, fg="#ffffff", activebackground=ACCENT_GREEN, activeforeground="#ffffff", highlightbackground=ACCENT_GREEN, highlightthickness=0)
+                b.configure(bg=C["bg_success"], fg=C["txt_green"], activebackground=C["bg_success"], activeforeground=C["txt_green"], highlightbackground=ACCENT_GREEN, highlightthickness=1)
             else:
-                b.configure(bg=C["bg_card"], fg=C["txt_green"], activebackground=C["bg_success"], activeforeground=C["txt_green"], highlightbackground=ACCENT_GREEN, highlightthickness=1)
+                b.configure(bg=C["bg_card"], fg=C["txt_muted"], activebackground=C["bg_hover"], activeforeground=C["txt_secondary"], highlightbackground=C["border_light"], highlightthickness=1)
 
     def _on_com_change(self) -> None:
         """COM mesuré (X séries) changé : sync Monitor + boutons verts."""
@@ -606,116 +763,6 @@ class ApplicationIPQ(tk.Tk):
         self._monitor.set_com_actif(sel)
         if hasattr(self, "_btn_com1"):
             self._maj_boutons_com()
-
-    # ── Vue : Calibration ─────────────────────────────────────────────────────
-
-    def _vue_calibration(self) -> tk.Frame:
-        f = tk.Frame(self.frame_content, bg=C["bg_app"])
-        _section_title(f, "aquisition & calibration")
-
-        # ── Multimètre mesuré (sélectionnable ici) ────────────────────────
-        c_sel = card(f)
-        c_sel.pack(fill="x", padx=20, pady=(0, 12))
-        row_sel = tk.Frame(c_sel, bg=C["bg_card"])
-        row_sel.pack(anchor="w", padx=14, pady=(12, 8))
-        lbl(row_sel, "Measuring multimeter:", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(side="left", padx=(0, 12))
-        self._btn_com1 = btn(row_sel, label_multimetre("com1"), command=lambda: self.var_com_mesure.set("com1"), color=C["bg_input"], fgcolor=C["txt_secondary"], padx=14, pady=6)
-        self._btn_com1.pack(side="left", padx=(0, 6))
-        self._btn_com2 = btn(row_sel, label_multimetre("com2"), command=lambda: self.var_com_mesure.set("com2"), color=C["bg_input"], fgcolor=C["txt_secondary"], padx=14, pady=6)
-        self._btn_com2.pack(side="left")
-        lbl(c_sel, "Select the multimeter to read", FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(anchor="w", padx=14, pady=(0, 12))
-        self._maj_boutons_com()
-
-        c = card(f)
-        c.pack(fill="x", padx=20, pady=(0, 12))
-
-        grid = tk.Frame(c, bg=C["bg_card"])
-        grid.pack(padx=14, pady=14)
-
-        lbl(grid, "Number of series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=0, column=0, sticky="e", padx=(0, 10), pady=6)
-        self.var_nb_series = tk.IntVar(value=5)
-        sp = tk.Spinbox(
-            grid,
-            from_=1,
-            to=99,
-            textvariable=self.var_nb_series,
-            width=6,
-            font=FONT,
-            bg=C["bg_input"],
-            fg=C["txt_primary"],
-            buttonbackground=C["bg_hover"],
-            relief="flat",
-            bd=1,
-            highlightbackground=C["border_light"],
-            highlightthickness=1,
-        )
-        sp.grid(row=0, column=1, sticky="w", pady=6)
-
-        lbl(grid, "Wait between series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=1, column=0, sticky="e", padx=(0, 10), pady=6)
-        self.var_attente_s = tk.IntVar(value=60)
-        tk.Spinbox(
-            grid,
-            from_=0,
-            to=600,
-            increment=5,
-            textvariable=self.var_attente_s,
-            width=6,
-            font=FONT,
-            bg=C["bg_input"],
-            fg=C["txt_primary"],
-            buttonbackground=C["bg_hover"],
-            relief="flat",
-            bd=1,
-            highlightbackground=C["border_light"],
-            highlightthickness=1,
-        ).grid(row=1, column=1, sticky="w", pady=6)
-        lbl(grid, "Beeps 1/s play during the wait", FONT_SMALL, C["txt_muted"], C["bg_card"]).grid(row=1, column=2, sticky="w", padx=(10, 0), pady=6)
-
-        # ── Overlock : points par X-série (2–50). Init/finale restent à 30 ; la
-        #    feuille Excel est dimensionnée sur max(30, points) via nb_points_feuille.
-        lbl(grid, "Points per series :", FONT, C["txt_secondary"], C["bg_card"]).grid(row=2, column=0, sticky="e", padx=(0, 10), pady=6)
-        self.var_nb_points = tk.IntVar(value=self.gestion_init.nb_points)
-        tk.Spinbox(
-            grid,
-            from_=NB_POINTS_MIN,
-            to=NB_POINTS_MAX,
-            textvariable=self.var_nb_points,
-            width=6,
-            font=FONT,
-            bg=C["bg_input"],
-            fg=C["txt_primary"],
-            buttonbackground=C["bg_hover"],
-            relief="flat",
-            bd=1,
-            highlightbackground=C["border_light"],
-            highlightthickness=1,
-        ).grid(row=2, column=1, sticky="w", pady=6)
-        ovl_row = tk.Frame(grid, bg=C["bg_card"])
-        ovl_row.grid(row=2, column=2, sticky="w", padx=(10, 0), pady=6)
-        btn(ovl_row, "Apply", command=self._appliquer_overlock, padx=12, pady=4).pack(side="left")
-        lbl(ovl_row, f"Init/final stay {NB_POINTS} · sheet resizes to fit",
-            FONT_SMALL, C["txt_muted"], C["bg_card"]).pack(side="left", padx=(8, 0))
-
-        # Progression boucle
-        self.lbl_serie_status = lbl(c, "Series — / —", FONT_BOLD, C["txt_blue"], C["bg_card"])
-        self.lbl_serie_status.pack(anchor="w", padx=14)
-
-        self.progress_cal = ttk.Progressbar(c, length=100, maximum=5, mode="determinate", style="Green.Horizontal.TProgressbar")
-        self.progress_cal.pack(fill="x", padx=14, pady=(6, 14))
-
-        btn_cal_row = tk.Frame(f, bg=C["bg_app"])
-        btn_cal_row.pack(anchor="w", padx=20, pady=(0, 20))
-        self.btn_cal_start = btn(btn_cal_row, "START", command=self._lancer_calibration, color=ACCENT_GREEN, fgcolor="#ffffff", padx=16, pady=9)
-        self.btn_cal_start.configure(activebackground=ACCENT_GREEN, activeforeground="#ffffff")
-        self.btn_cal_start.pack(side="left", padx=(0, 8))
-        self.btn_cal_stop = btn(btn_cal_row, "STOP", command=self._arreter_calibration, color=ACCENT_RED, fgcolor="#ffffff", padx=14, pady=9)
-        self.btn_cal_stop.configure(activebackground=ACCENT_RED, activeforeground="#ffffff", disabledforeground="#ffffff", state="disabled")
-        self.btn_cal_stop.pack(side="left")
-
-        self.btn_final = btn_noir(btn_cal_row, "⧉  Final measurement", command=self._mesure_finale, padx=14, pady=9)
-        self.btn_final.pack(side="left", padx=(8, 0))
-
-        return f
 
     # ── Vue : Résultats ───────────────────────────────────────────────────────
 
@@ -830,7 +877,7 @@ class ApplicationIPQ(tk.Tk):
         self.var_operateur.set(f"👤  {operateur}")
 
     def _vue_connexion_ok(self, indice, simulation, dossier, chemin) -> None:
-        self._log(f"Excel file created: {chemin}", "ok")
+        self._log(f"Session configured — Excel file: {chemin} (created when you approve the initialization)", "ok")
         if simulation:
             self._log(f"Simulation folder: {os.path.abspath(dossier)}", "info")
         self._statut(f"Configured — identifier: {indice}")
@@ -854,7 +901,7 @@ class ApplicationIPQ(tk.Tk):
     def _maj_init_pt(self, cible: str, i: int, valeur, t: float, hr: float) -> None:
         n = cible[-1]
         getattr(self, f"prog_init{n}")["value"] = i
-        self.progress_statut.configure(maximum=NB_POINTS)   # init = 30 points fixes
+        self.progress_statut.configure(maximum=NB_POINTS)  # init = 30 points fixes
         self.progress_statut["value"] = i
         self._monitor.on_init_point(cible, i, valeur, t, hr)
         self.var_t.set(f"T: {t:g} °C")
@@ -864,7 +911,7 @@ class ApplicationIPQ(tk.Tk):
 
     def _vue_init_demarrage(self, cible: str) -> None:
         n = cible[-1]
-        nbp = NB_POINTS   # init COM1/COM2 : toujours 30 points (hors overlock X-série)
+        nbp = NB_POINTS  # init COM1/COM2 : toujours 30 points (hors overlock X-série)
         getattr(self, f"prog_init{n}").configure(maximum=nbp)
         getattr(self, f"prog_init{n}")["value"] = 0
         self._monitor.set_nb_points(nbp)
@@ -1010,7 +1057,7 @@ class ApplicationIPQ(tk.Tk):
     # ── Vue Mesure finale (COM1 + COM2, comme l'init) ─────────────────────────
 
     def _vue_mesure_finale_demarrage(self) -> None:
-        nbp = NB_POINTS   # mesure finale COM1/COM2 : toujours 30 points (comme l'init)
+        nbp = NB_POINTS  # mesure finale COM1/COM2 : toujours 30 points (comme l'init)
         self._monitor.set_nb_points(nbp)
         self.progress_statut.configure(maximum=nbp * 2)  # com1 puis com2
         self.progress_statut["value"] = 0
@@ -1055,8 +1102,110 @@ class ApplicationIPQ(tk.Tk):
             self._statut(f"Final measurement completed — Final {label_multimetre('com1')} / {label_multimetre('com2')} exported.")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Helpers
+    # Help
     # ══════════════════════════════════════════════════════════════════════════
+    def _vue_help(self) -> tk.Frame:
+        """Page « Help & About » : 3 sous-vues en cartes cliquables + carte À propos."""
+        f = tk.Frame(self.frame_content, bg=C["bg_app"])
+        scroll = _ScrollFrame(f)
+        scroll.pack(fill="both", expand=True)
+        inner = scroll.inner
+
+        _section_title(inner, "Help & About")
+
+        grille = tk.Frame(inner, bg=C["bg_app"])
+        grille.pack(fill="x", padx=20, pady=(0, 4))
+        cartes = [
+            ("🧭", C["bg_badge"], C["txt_active"], "Quick start", "Connection → Init → Calibration → Results.", "help_quickstart"),
+            ("🔌", C["bg_success"], C["txt_green"], "Instruments", "UR / UL, Hart 1620 or RUSKA, COM and GPIB.", "help_instruments"),
+            ("🛟", C["bg_warning"], C["txt_amber"], "Troubleshooting", "Device disconnects, T: error, Excel locked.", "help_troubleshooting"),
+        ]
+        for i, (icone, bg_i, fg_i, titre, desc, cible) in enumerate(cartes):
+            grille.columnconfigure(i, weight=1, uniform="help")
+            self._carte_help(grille, i, icone, bg_i, fg_i, titre, desc, cible)
+
+        # Carte « À propos »
+        c = card(inner)
+        c.pack(fill="x", padx=20, pady=(10, 20))
+        row = tk.Frame(c, bg=C["bg_card"])
+        row.pack(fill="x", padx=16, pady=14)
+        lbl(row, "🪶", ("Segoe UI Emoji", 22), C["txt_secondary"], C["bg_card"]).pack(side="left", padx=(0, 14))
+        box = tk.Frame(row, bg=C["bg_card"])
+        box.pack(side="left", fill="x", expand=True)
+        lbl(box, "IPQ / LFR — Photometer and luxmeter calibration", FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(anchor="w")
+        lbl(box, f"Version {APP_VERSION}  ·  support and contact", FONT_SMALL, C["txt_secondary"], C["bg_card"]).pack(anchor="w")
+        return f
+
+    def _carte_help(self, parent, col, icone, bg_icone, fg_icone, titre, desc, cible) -> None:
+        """Carte cliquable d'une sous-vue d'aide, dans une grille à colonnes égales."""
+        c = card(parent)
+        c.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0 if col == 2 else 6))
+        inner = tk.Frame(c, bg=C["bg_card"])
+        inner.pack(fill="both", expand=True, padx=14, pady=14)
+        tk.Label(inner, text=icone, font=("Segoe UI Emoji", 18), bg=bg_icone, fg=fg_icone, padx=8, pady=4).pack(anchor="w", pady=(0, 10))
+        lbl(inner, titre, FONT_BOLD, C["txt_primary"], C["bg_card"]).pack(anchor="w")
+        lbl(inner, desc, FONT_SMALL, C["txt_secondary"], C["bg_card"], wraplength=230, justify="left").pack(anchor="w", pady=(2, 10))
+        lbl(inner, "Open  →", FONT_SMALL, C["txt_active"], C["bg_card"]).pack(anchor="w")
+        self._rendre_cliquable(c, cible)
+
+    def _rendre_cliquable(self, widget, cible: str) -> None:
+        """Rend un widget ET tous ses descendants cliquables → navigation vers `cible`."""
+        widget.configure(cursor="hand2")
+        widget.bind("<Button-1>", lambda _e, v=cible: self._naviguer(v))
+        for child in widget.winfo_children():
+            self._rendre_cliquable(child, cible)
+
+    def _maj_help_image(self, survol: bool) -> None:
+        """Bascule l'image du bouton Help entre survol et repos (no-op si pas d'images)."""
+        if getattr(self, "_img_help_normal", None) is None:
+            return
+        self._help_hovered = survol
+        self.btn_help.configure(image=self._img_help_hover if survol else self._img_help_normal)
+
+    def _ouvrir_menu_help(self) -> None:
+        # Affiche le menu sous le bouton Help. Image « active » (chevron ^) pendant que le
+        # menu est ouvert, puis retour survol/repos selon la position de la souris.
+        img_ok = getattr(self, "_img_help_normal", None) is not None
+        try:
+            if img_ok:
+                self.btn_help.configure(image=self._img_help_active)
+            x = self.btn_help.winfo_rootx()
+            y = self.btn_help.winfo_rooty() + self.btn_help.winfo_height()
+            self.menu_help.tk_popup(x, y)
+        finally:
+            self.menu_help.grab_release()
+            if img_ok:
+                self.btn_help.configure(image=self._img_help_hover if self._help_hovered else self._img_help_normal)
+
+    def _vue_help_sous(self, titre: str, texte: str) -> tk.Frame:
+        """Gabarit d'une sous-vue d'aide : bouton retour + titre + texte dans une carte."""
+        f = tk.Frame(self.frame_content, bg=C["bg_app"])
+        scroll = _ScrollFrame(f)
+        scroll.pack(fill="both", expand=True)
+        inner = scroll.inner
+
+        barre = tk.Frame(inner, bg=C["bg_app"])
+        barre.pack(fill="x", padx=20, pady=(16, 0))
+        btn(barre, "←  Help", command=lambda: self._naviguer("help")).pack(side="left")
+
+        _section_title(inner, titre)
+        c = card(inner)
+        c.pack(fill="x", padx=20, pady=(0, 20))
+        texte_lbl = lbl(c, texte, FONT_MONO, C["txt_primary"], C["bg_card"], justify="left")
+        texte_lbl.pack(anchor="w", fill="x", padx=16, pady=14)
+        # Le texte s'enroule à la largeur de la carte (jamais de débordement horizontal),
+        # quelle que soit la longueur des lignes saisies dans les modules txt_help.
+        c.bind("<Configure>", lambda e, w=texte_lbl: w.configure(wraplength=max(320, e.width - 40)))
+        return f
+
+    def _vue_help_quickstart(self) -> tk.Frame:
+        return self._vue_help_sous("Quick start", help_quickstart)
+
+    def _vue_help_instruments(self) -> tk.Frame:
+        return self._vue_help_sous("Instruments and wiring", help_instruments)
+
+    def _vue_help_troubleshooting(self) -> tk.Frame:
+        return self._vue_help_sous("Troubleshooting and FAQ", help_troubleshooting)
 
     def _demander_mode_simulation(self, _event=None) -> None:
         """Ctrl+Shift+F12 — raccourci vers le panneau admin."""
@@ -1168,46 +1317,18 @@ class ApplicationIPQ(tk.Tk):
         os.makedirs(dossier, exist_ok=True)
         subprocess.Popen(f'explorer "{dossier}"')
 
-    def _appliquer_overlock(self, _event=None) -> None:
-        """Overlock : fixe le nombre de points par X-SÉRIE (borné [MIN, MAX]).
+    def _lire_nb_points(self) -> Optional[int]:
+        """Overlock : lit les points par X-série depuis le spinbox (sélection directe).
 
-        La feuille Excel doit contenir max(30, points) lignes de données — l'init et la
-        mesure finale restent à 30 points. On ne RÉINITIALISE la session que si la feuille
-        déjà créée est trop PETITE pour la nouvelle capacité (agrandissement) : sinon
-        `ajouter_serie` lèverait sur une X-série plus longue que la feuille. Un
-        rétrécissement (ou un choix <= 30) reste compatible et ne touche pas à l'init.
+        Miroir de `_lire_nb_series` : la valeur affichée est lue au moment où elle sert
+        (création de session, démarrage de mesure). Le bornage [MIN, MAX] est fait par
+        `gestion_init.definir_nb_points`. Retourne None si la saisie est invalide.
         """
-        if self._acq_en_cours:
-            self.afficher_avertissement("Operation in progress", "Cannot change the point count during an acquisition.")
-            return
         try:
-            nb = int(self.var_nb_points.get())
+            return int(self.var_nb_points.get())
         except (tk.TclError, ValueError):
-            self.afficher_avertissement("Invalid value", "Enter a whole number of points.")
-            return
-        borne = max(NB_POINTS_MIN, min(nb, NB_POINTS_MAX))
-        capacite_requise = max(NB_POINTS, borne)   # = nb_points_feuille pour cette valeur
-        if self.export_xls is not None and self.export_xls.nb_points < capacite_requise:
-            if not self.demander_confirmation(
-                "Session will be reset",
-                "This point count needs a larger Excel sheet than the current session.\n"
-                "Resetting clears the current file and the initialization\n"
-                "(they were laid out for fewer points).\n"
-                "You will recreate the session on the Connection page.\n\nContinue?",
-            ):
-                return
-            try:
-                self.export_xls.fermer()
-            except Exception as exc:
-                self._log(f"Could not close the previous Excel file: {exc}", "err")
-            self.export_xls = None
-            self.gestion_init.reinitialiser()
-            self._vue_reset_session()
-        applied = self.gestion_init.definir_nb_points(nb)
-        self.var_nb_points.set(applied)
-        feuille = self.gestion_init.nb_points_feuille
-        self._log(f"Overlock: {applied} points per X-series (sheet capacity {feuille}).", "ok")
-        self._statut(f"Overlock set — {applied} points/X-series (init/final stay {NB_POINTS}).")
+            messagebox.showerror("Invalid value", "The number of points per series is invalid.")
+            return None
 
     def _vue_reset_session(self) -> None:
         """Purge l'affichage (Monitor + tableau Results) lors d'un changement de session."""
@@ -1354,7 +1475,13 @@ class ApplicationIPQ(tk.Tk):
         logger.info(msg)
 
     def _exporter_xls(self) -> None:
-        if self.export_xls:
+        # Pendant un mesurage, les threads d'acquisition écrivent et sauvent le classeur :
+        # une sauvegarde manuelle simultanée corromprait le fichier (openpyxl non thread-safe).
+        if self._acq_en_cours:
+            messagebox.showinfo("Export", "A measurement is running — wait for it to finish before exporting.")
+            return
+        # Le fichier n'existe qu'à partir de l'approbation de l'init : rien à sauvegarder avant.
+        if self.export_xls and self.export_xls.est_ouvert():
             try:
                 self.export_xls.fermer()
             except RuntimeError as exc:
@@ -1364,7 +1491,7 @@ class ApplicationIPQ(tk.Tk):
             self._log("Excel file saved.", "ok")
             messagebox.showinfo("Export", f"File saved:\n{self.export_xls.chemin_fichier}")
         else:
-            messagebox.showinfo("Export", "No Excel file is open.")
+            messagebox.showinfo("Export", "No measurement recorded yet — nothing to save.")
 
     def _quitter(self) -> None:
         if self._acq_en_cours:
@@ -1395,7 +1522,7 @@ class ApplicationIPQ(tk.Tk):
 
     def _finaliser_quitter(self) -> None:
         self.journal.enregistrer(EV_ARRET, "Application fermée normalement")
-        if self.export_xls:
+        if self.export_xls and self.export_xls.est_ouvert():
             try:
                 self.export_xls.fermer()
             except RuntimeError as exc:
@@ -1417,20 +1544,80 @@ class ApplicationIPQ(tk.Tk):
 
 
 class _ScrollFrame(tk.Frame):
-    """Frame avec scrollbar verticale."""
+    """Frame défilable : scrollbar verticale BIEN VISIBLE (large, contrastée) + molette."""
+
+    _canvases = []  # tous les canvas défilables, pour router la molette
+    _molette_liee = False  # le handler global n'est posé qu'une fois
 
     def __init__(self, parent, **kw):
         super().__init__(parent, bg=C["bg_app"], **kw)
         canvas = tk.Canvas(self, bg=C["bg_app"], highlightthickness=0)
-        sb = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
         self.inner = tk.Frame(canvas, bg=C["bg_app"])
         self.inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         window_id = canvas.create_window((0, 0), window=self.inner, anchor="nw")
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window_id, width=e.width))
-        canvas.configure(yscrollcommand=sb.set)
+
+        # ── Scrollbar DESSINÉE (Canvas) : piste claire + pouce foncé arrondi, bien
+        #    visible (le tk.Scrollbar natif sous Windows était trop délavé). Draggable.
+        bar = tk.Canvas(self, width=16, bg=C["bg_app"], highlightthickness=0, bd=0, cursor="hand2")
+        bar._fl = (0.0, 1.0)
+        bar._thumb = C["scroll_thumb"]
+
+        def _pts(x0, y0, x1, y1, r):
+            return [x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1, x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0]
+
+        def _dessiner(first=None, last=None):
+            if first is not None:
+                bar._fl = (float(first), float(last))
+            first, last = bar._fl
+            bar.delete("all")
+            h = bar.winfo_height()
+            if h <= 1:
+                return
+            bar.create_line(8, 6, 8, h - 6, fill=C["scroll_track"], width=6, capstyle="round")
+            if last - first >= 0.999:
+                return  # tout visible : pas de pouce
+            y0, y1 = first * h + 1, last * h - 1
+            if y1 - y0 < 16:  # pouce mini (saisissable)
+                mid = (y0 + y1) / 2
+                y0, y1 = mid - 8, mid + 8
+            r = min(5, (y1 - y0) / 2)
+            bar.create_polygon(_pts(3, y0, 13, y1, r), smooth=True, fill=bar._thumb)
+
+        canvas.configure(yscrollcommand=_dessiner)
+        bar.bind("<Configure>", lambda e: _dessiner())
+
+        def _drag(e):
+            h = bar.winfo_height() or 1
+            demi = (bar._fl[1] - bar._fl[0]) / 2
+            canvas.yview_moveto(min(max(e.y / h - demi, 0.0), 1.0))
+
+        bar.bind("<Button-1>", _drag)
+        bar.bind("<B1-Motion>", _drag)
+        bar.bind("<Enter>", lambda e: (setattr(bar, "_thumb", C["scroll_thumb_hover"]), _dessiner()))
+        bar.bind("<Leave>", lambda e: (setattr(bar, "_thumb", C["scroll_thumb"]), _dessiner()))
+
+        bar.pack(side="right", fill="y", padx=(0, 2))
         canvas.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * e.delta / 120), "units"))
+
+        # Molette : un SEUL handler global route le défilement vers le canvas réellement
+        # sous le pointeur — sinon (bind_all par vue) seule la dernière vue scrollait.
+        _ScrollFrame._canvases.append(canvas)
+        if not _ScrollFrame._molette_liee:
+            self.bind_all("<MouseWheel>", _ScrollFrame._router_molette)
+            _ScrollFrame._molette_liee = True
+
+    @staticmethod
+    def _router_molette(e) -> None:
+        try:
+            w = e.widget.winfo_containing(e.x_root, e.y_root)
+        except Exception:
+            return
+        while w is not None:
+            if w in _ScrollFrame._canvases:
+                w.yview_scroll(int(-e.delta / 120), "units")
+                return
+            w = getattr(w, "master", None)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

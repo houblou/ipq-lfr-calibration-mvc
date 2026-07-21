@@ -33,12 +33,16 @@ class GestionInitialisation:
         self.v_init1:     Optional[float] = None
         self.t_moy_init1: Optional[float] = None
         self.hr_moy_init1:Optional[float] = None
+        self.date_init1:  Optional[str] = None   # horodatage RÉEL d'acquisition (traçabilité)
+        self.heure_init1: Optional[str] = None
 
         self.n_init2:     Optional[List] = None
         self.m_init2:     Optional[float] = None
         self.v_init2:     Optional[float] = None
         self.t_moy_init2: Optional[float] = None
         self.hr_moy_init2:Optional[float] = None
+        self.date_init2:  Optional[str] = None
+        self.heure_init2: Optional[str] = None
 
     # ── Initialisation ────────────────────────────────────────────────────────
 
@@ -82,11 +86,13 @@ class GestionInitialisation:
             if cible == "com1":
                 self.n_init1, self.m_init1, self.v_init1 = n, m, v
                 self.t_moy_init1, self.hr_moy_init1 = t_moy, hr_moy
+                self.date_init1, self.heure_init1 = date, heure   # instant d'acquisition réel
                 self.init1_ok = True
                 logger.info("Init COM1 — M=%.6f V=%.6f", m, v)
             else:
                 self.n_init2, self.m_init2, self.v_init2 = n, m, v
                 self.t_moy_init2, self.hr_moy_init2 = t_moy, hr_moy
+                self.date_init2, self.heure_init2 = date, heure   # instant d'acquisition réel
                 self.init2_ok = True
                 logger.info("Init COM2 — M=%.6f V=%.6f", m, v)
 
@@ -105,21 +111,20 @@ class GestionInitialisation:
         Les deux initialisations sont obligatoires, indépendamment du COM
         choisi pour les X séries. Appelé après valider_init().
         """
-        dist  = self.distance_mm
-        date  = datetime.now().strftime("%d/%m/%Y")
-        heure = datetime.now().strftime("%H:%M:%S")
-
+        dist = self.distance_mm
+        # Horodatage = instant RÉEL d'acquisition de chaque init (mémorisé pendant
+        # lancer_init), pas l'instant d'export — sinon la traçabilité serait faussée.
         if self.init1_ok and self.n_init1 is not None:
             export_xls.ajouter_serie(
                 self.n_init1, self.m_init1, self.v_init1,
                 self.t_moy_init1, self.hr_moy_init1,
-                dist, date, heure, label="Init COM1",
+                dist, self.date_init1 or "", self.heure_init1 or "", label="Init COM1",
             )
         if self.init2_ok and self.n_init2 is not None:
             export_xls.ajouter_serie(
                 self.n_init2, self.m_init2, self.v_init2,
                 self.t_moy_init2, self.hr_moy_init2,
-                dist, date, heure, label="Init COM2",
+                dist, self.date_init2 or "", self.heure_init2 or "", label="Init COM2",
             )
         logger.info("Colonnes Init COM1 / Init COM2 exportées.")
 
@@ -138,6 +143,8 @@ class GestionInitialisation:
         self.init1_ok = self.init2_ok = self.init_validee = False
         self.n_init1 = self.m_init1 = self.v_init1 = None
         self.n_init2 = self.m_init2 = self.v_init2 = None
+        self.date_init1 = self.heure_init1 = None
+        self.date_init2 = self.heure_init2 = None
         logger.info("État initialisation réinitialisé.")
 
     # ── Paramètres ────────────────────────────────────────────────────────────
@@ -156,13 +163,6 @@ class GestionInitialisation:
         logger.info("Points par X-série = %d (overlock ; init/finale restent %d)",
                     self.nb_points, NB_POINTS)
         return self.nb_points
-
-    @property
-    def nb_points_feuille(self) -> int:
-        """Taille de la feuille Excel = max(30, points X-série).
-        La feuille doit contenir dans la MÊME mise en page les colonnes init/finale
-        (toujours 30 points) ET les colonnes X-série (2 à 50 points)."""
-        return max(NB_POINTS, self.nb_points)
 
     def definir_distance(self, distance_mm: float) -> None:
         if distance_mm < 0:

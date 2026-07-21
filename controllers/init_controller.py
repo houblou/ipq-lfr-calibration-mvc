@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """controllers/init_controller.py — orchestration du flux d'initialisation COM1/COM2 (sans widgets)."""
 from models.acquisition import Acquisition
-from models.audit import EV_INIT_DEBUT, EV_INIT_FIN, EV_INIT_INTERROMPUE, EV_INIT_VALIDEE
+from models.audit import (
+    EV_INIT_DEBUT, EV_INIT_FIN, EV_INIT_INTERROMPUE, EV_INIT_VALIDEE, EV_EXPORT_EXCEL,
+)
 from core.config import NB_POINTS, label_multimetre
 
 
@@ -66,23 +68,54 @@ class InitController:
             return
         if not app.export_xls:
             app.gestion_init.init_validee = False
-            app._log("No Excel file is open — initialization not approved.", "err")
-            app.afficher_erreur("Export required", "Create the Excel file in the Connection page first.")
+            app._log("No session configured — validate the connection first.", "err")
+            app.afficher_erreur("Session required", "Configure the session on the Connection page first.")
+            return
+        # Overlock : on applique le nombre de points par X-série AFFICHÉ (spinbox) avant de
+        # dimensionner la feuille — sinon la feuille serait taillée sur la valeur par défaut
+        # du modèle. Une saisie invalide annule l'approbation (rien n'est écrit).
+        pts = app._lire_nb_points()
+        if pts is None:
+            app.gestion_init.init_validee = False
+            return
+        app.gestion_init.definir_nb_points(pts)
+        app.var_nb_points.set(app.gestion_init.nb_points)   # WYSIWYG : valeur bornée
+        # Le fichier Excel est CRÉÉ ICI, à l'approbation : l'init est persistée immédiatement
+        # (jamais gardée seulement en mémoire). La feuille est dimensionnée sur le nombre de
+        # points par X-série choisi à ce stade (max(30, points)) ; pour utiliser plus de
+        # points il faut les régler AVANT d'approuver. On refuse d'écraser des séries de
+        # mesure déjà écrites (re-approbation après démarrage d'un mesurage).
+        exp = app.export_xls
+        if exp.est_ouvert() and exp.serie_courante > 2:
+            # Des séries de MESURE sont déjà écrites : on REFUSE de reconstruire la feuille
+            # (ouvrir l'écraserait). L'init reste VALIDE (init_validee CONSERVÉ) — la session
+            # est correctement initialisée, on interdit seulement la ré-init en place. Ne PAS
+            # révoquer init_validee ici, sinon la mesure finale/les X-séries seraient bloquées.
+            app._log("Measurement already recorded — cannot re-initialize in place.", "err")
+            app.afficher_erreur(
+                "Measurement in progress",
+                "Measurement series are already recorded. Create a new session to re-initialize.")
+            return
+        if not exp.ouvrir(nb_points=max(NB_POINTS, app.gestion_init.nb_points)):
+            app.gestion_init.init_validee = False
+            app._log("Unable to create the Excel file.", "err")
+            app.afficher_erreur("Export", "Unable to create the Excel file.")
             return
         try:
-            app.gestion_init.exporter_inits(app.export_xls)
+            app.gestion_init.exporter_inits(exp)
         except (RuntimeError, ValueError) as exc:
             app.gestion_init.init_validee = False
             app._log(f"Initialization export failed: {exc}", "err")
             app.afficher_erreur("Export error", str(exc))
             return
-        nb = app.export_xls.serie_courante
-        app._log(f"{label_multimetre('com1')} / {label_multimetre('com2')} initialization columns exported ({nb-1}, {nb}).", "ok")
+        app.journal.enregistrer(EV_EXPORT_EXCEL, f"Fichier créé : {exp.chemin_fichier}")
+        nb = exp.serie_courante
+        app._log(f"{label_multimetre('com1')} / {label_multimetre('com2')} initialization columns written ({nb-1}, {nb}).", "ok")
         app._vue_init_approuve()
         app.journal.enregistrer(
             EV_INIT_VALIDEE,
             f"dist={app.gestion_init.distance_mm:.1f} mm  "
-            f"colonnes_excel={app.export_xls.serie_courante - 1},{app.export_xls.serie_courante}",
+            f"colonnes_excel={exp.serie_courante - 1},{exp.serie_courante}",
         )
         app._log("Initialization approved by operator.", "ok")
         app._statut("Initialization approved — ready for measurement.")

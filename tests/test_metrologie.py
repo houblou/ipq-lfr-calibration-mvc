@@ -119,6 +119,33 @@ class TestExportExcel(unittest.TestCase):
         self.assertEqual(feuille.cell(row=31, column=2).value, "INVALID")
         self.assertIn("invalid", str(feuille.cell(row=1, column=2).value).lower())
 
+    def test_ouvrir_dimensionne_a_la_taille_demandee(self):
+        # Création à l'approbation : tant que ouvrir() n'est pas appelé, le fichier n'existe
+        # pas (est_ouvert False). ouvrir(nb_points=...) fixe la CAPACITÉ à la création.
+        export = ExportXLS("SIZE", dossier=self.tempdir.name)
+        self.assertFalse(export.est_ouvert())
+        self.assertTrue(export.ouvrir(nb_points=40))
+        self.assertTrue(export.est_ouvert())
+        self.assertEqual(export.nb_points, 40)
+        self.assertEqual(export.row_moyenne, 42)
+        export.ajouter_serie([float(i) for i in range(1, 41)], 5.0, 1.0, label="S1")
+        feuille = load_workbook(export.chemin_fichier, data_only=True).active
+        self.assertEqual(feuille.cell(row=41, column=2).value, 40.0)     # 40e point
+        self.assertEqual(feuille.cell(row=42, column=2).value, 5.0)      # MEAN aligné en 42
+
+    def test_ouvrir_echec_laisse_non_ouvert_et_retry_propre(self):
+        # Atomicité : si la sauvegarde échoue (fichier verrouillé), ouvrir() renvoie False
+        # ET est_ouvert() reste False -> un retry recrée un classeur PROPRE (serie_courante
+        # remis à 0), évitant que la ré-écriture des colonnes d'init soit sautée.
+        import openpyxl
+        export = ExportXLS("ATOM", dossier=self.tempdir.name)
+        with mock.patch.object(openpyxl.Workbook, "save", side_effect=OSError("locked")):
+            self.assertFalse(export.ouvrir(nb_points=30))
+        self.assertFalse(export.est_ouvert())
+        self.assertTrue(export.ouvrir(nb_points=30))    # retry sans verrou
+        self.assertTrue(export.est_ouvert())
+        self.assertEqual(export.serie_courante, 0)
+
     def test_overlock_layout_dynamique(self):
         # Overlock : un nombre de points != 30 décale la synthèse en conséquence.
         export = ExportXLS("OVL", dossier=self.tempdir.name, nb_points=10)

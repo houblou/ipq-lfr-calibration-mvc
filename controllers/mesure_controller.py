@@ -8,7 +8,7 @@ from models.calibration import BoucleCalibration
 from models.audit import (
     EV_CAL_DEBUT, EV_CAL_SERIE, EV_CAL_FIN, EV_CAL_INTERROMPUE, EV_ERREUR,
 )
-from core.config import NB_POINTS, label_multimetre
+from core.config import NB_POINTS, NB_POINTS_MIN, NB_POINTS_MAX, label_multimetre
 
 
 class MesureController:
@@ -41,7 +41,24 @@ class MesureController:
         x = app._lire_nb_series()
         if x is None:
             return
+        pts = app._lire_nb_points()
+        if pts is None:
+            return
         attente_s = app._lire_attente_s()
+
+        # Overlock (sélection directe) : on borne la valeur affichée (WYSIWYG). La feuille
+        # a été dimensionnée à l'approbation de l'init (init_validee requis ci-dessus -> le
+        # fichier est déjà ouvert). Si la X-série demandée dépasse cette capacité, on REFUSE
+        # proprement — jamais de réécriture. Sinon on applique la valeur (bornée).
+        borne = max(NB_POINTS_MIN, min(pts, NB_POINTS_MAX))
+        app.var_nb_points.set(borne)                       # WYSIWYG (ex. 999 affiché -> 50)
+        if borne > app.export_xls.nb_points:
+            app.afficher_avertissement(
+                "Points per series too high",
+                f"The Excel sheet holds {app.export_xls.nb_points} points per series.\n"
+                f"To use {borne}, set it before approving the initialization (new session).")
+            return
+        app.gestion_init.definir_nb_points(borne)
 
         app.gestion_init.definir_nb_series(x)
         app.gestion_init.definir_distance(app._get_distance())
@@ -137,6 +154,15 @@ class MesureController:
             return
         if not app.export_xls:
             app.afficher_avertissement("Export", "Configure the Excel session on the Connection page first")
+            return
+        # La mesure finale clôt un relevé : l'init doit être approuvée AVANT (comme pour les
+        # X-séries). Ce gate garantit aussi que le fichier existe et contient déjà les
+        # colonnes Init COM1/COM2 (créées à l'approbation) — jamais de finale sans init.
+        if not app.gestion_init.init_validee:
+            app.afficher_avertissement(
+                "Initialization required",
+                f"{label_multimetre('com1')} and {label_multimetre('com2')} initialization must be approved\n"
+                "on the Initialization page before the final measurement.")
             return
         # Mesure finale = les DEUX multimètres (comme l'init) -> com1 ET com2 requis.
         if not app._verifier_ports_requis("com1", "com2", "thermo1"):

@@ -182,7 +182,7 @@ class TestExports(unittest.TestCase):
 class TestInterfaceVue(unittest.TestCase):
     METHODES_REQUISES = [
         "afficher_avertissement", "afficher_erreur", "demander_secret", "demander_confirmation",
-        "_lire_nb_series", "_lire_attente_s", "_get_distance", "_verifier_ports_requis",
+        "_lire_nb_series", "_lire_nb_points", "_lire_attente_s", "_get_distance", "_verifier_ports_requis",
         "_maj_init_pt", "_vue_init_demarrage", "_vue_init_standby", "_vue_init_interrompu",
         "_vue_init_resultats", "_vue_init_pret", "_vue_init_approuve",
         "_vue_mesure_demarrage", "_vue_mesure_attente", "_vue_mesure_serie",

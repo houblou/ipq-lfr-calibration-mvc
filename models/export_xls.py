@@ -64,25 +64,47 @@ class ExportXLS:
         self.simulation      = simulation
         self.operateur       = operateur
         # Mise en page calculée d'après le nombre de points (overlock).
-        self.nb_points       = int(nb_points)
-        self._labels_synth   = {self.nb_points + off: lbl for off, lbl in _OFFSETS_SYNTH}
-        self.row_moyenne     = self.nb_points + 2
-        self.row_variance    = self.nb_points + 3
-        self.row_t_moy       = self.nb_points + 4
-        self.row_hr_moy      = self.nb_points + 5
-        self.row_distance    = self.nb_points + 6
-        self.row_date        = self.nb_points + 7
-        self.row_heure       = self.nb_points + 8
-        self.row_operateur   = self.nb_points + 9
+        self._appliquer_layout(nb_points)
 
-    def ouvrir(self) -> bool:
-        """Crée le classeur Excel et prépare la feuille principale."""
+    def _appliquer_layout(self, nb_points: int) -> None:
+        """Fixe la CAPACITÉ de la feuille (nombre de lignes de données) et en déduit la
+        position des lignes de synthèse. Utilisé à la création ET au redimensionnement."""
+        self.nb_points     = int(nb_points)
+        self._labels_synth = {self.nb_points + off: lbl for off, lbl in _OFFSETS_SYNTH}
+        self.row_moyenne   = self.nb_points + 2
+        self.row_variance  = self.nb_points + 3
+        self.row_t_moy     = self.nb_points + 4
+        self.row_hr_moy    = self.nb_points + 5
+        self.row_distance  = self.nb_points + 6
+        self.row_date      = self.nb_points + 7
+        self.row_heure     = self.nb_points + 8
+        self.row_operateur = self.nb_points + 9
+
+    def est_ouvert(self) -> bool:
+        """True si le fichier physique a été créé (ouvrir() appelé avec succès)."""
+        return self.ws is not None
+
+    def ouvrir(self, nb_points: Optional[int] = None) -> bool:
+        """Crée le classeur Excel et prépare la feuille principale.
+
+        `nb_points` permet de fixer la CAPACITÉ (taille) au moment de l'ouverture — la
+        création du fichier est décidée à l'approbation de l'init, une fois le nombre de
+        points par série connu. Si None, on garde la taille fixée à la construction.
+
+        ATOMICITÉ : ouvrir() (re)construit un classeur VIERGE (serie_courante remis à 0).
+        En cas d'échec de sauvegarde (fichier verrouillé par Excel/OneDrive…), wb et ws
+        sont remis à None pour que est_ouvert() reste False — un retry recrée proprement,
+        sans laisser un état « ouvert » qui ferait sauter la ré-écriture des colonnes.
+        """
         if not OPENPYXL_OK:
             logger.error("openpyxl non installé — export XLS impossible.")
             return False
+        if nb_points is not None:
+            self._appliquer_layout(nb_points)
         try:
             self.wb = openpyxl.Workbook()
             self.ws = self.wb.active
+            self.serie_courante = 0   # classeur neuf : aucune série écrite
             self.ws.title = "SIMULATION" if self.simulation else "Measurements"
             self._ecrire_entete()
             if self.simulation:
@@ -97,6 +119,8 @@ class ExportXLS:
             logger.info("Fichier Excel créé : %s", self.chemin_fichier)
             return True
         except Exception as exc:
+            self.wb = None
+            self.ws = None   # échec -> pas « ouvert » : le retry recrée un fichier propre
             logger.error("Erreur création Excel : %s", exc)
             return False
 

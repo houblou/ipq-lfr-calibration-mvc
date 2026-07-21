@@ -16,13 +16,18 @@ import tkinter as tk
 C = {
     "bg_app": "#D8D7D3",  # zone de contenu (gris clair)
     "bg_sidebar": "#EFEEEA",
+    "bg_sidebar_title": "#757266",
     "bg_topbar": "#F4F3F0",
     "bg_card": "#FFFFFF",
     "bg_input": "#FFFFFF",
     "bg_active": "#E6DCFB",  # sélection / état actif (violet pâle)
     "bg_hover": "#E8E7E2",
+    "scroll_track": "#CFCEC8",
+    "scroll_thumb": "#8A8D86",
+    "scroll_thumb_hover": "#5F6168",
     "bg_success": "#E4F2E9",
     "bg_danger": "#FBE4E2",
+    "bg_warning": "#FBF1DD",
     "bg_badge": "#EDEAF6",
     "border": "#DCDBD5",
     "border_light": "#C9C7C0",
@@ -36,21 +41,23 @@ C = {
     "txt_amber": "#B7791F",
 }
 
-# Accents pleins (boutons fortement colorés)
-ACCENT_VIOLET = "#7c4ddb"
-ACCENT_VIOLET_HOVER = "#6a3fce"
-ACCENT_GREEN = "#35a35a"
-ACCENT_RED = "#e0473d"
-NOIR = "#141414"
-NOIR_HOVER = "#000000"
-
-FONT = ("Segoe UI", 10)
-FONT_SMALL = ("Segoe UI", 9)
-FONT_BOLD = ("Segoe UI", 10, "bold")
-FONT_TITLE = ("Segoe UI", 13, "bold")
-FONT_LABEL = ("Segoe UI", 9)
-FONT_VALUE = ("Segoe UI", 18, "bold")
-FONT_MONO = ("Consolas", 9)
+# Accents pleins (boutons colorés) — désaturés pour un rendu plus calme, moins « lourd ».
+# On garde une luminosité proche des anciennes valeurs pour conserver le contraste du
+# texte blanc ; c'est surtout la SATURATION (et le noir pur) qui alourdissait l'écran.
+ACCENT_VIOLET = "#7458C2"
+ACCENT_VIOLET_HOVER = "#6349B0"
+ACCENT_GREEN = "#4E9670"
+ACCENT_RED = "#CB6156"
+NOIR = "#3B3A37"        # gris chaud foncé (au lieu du noir pur, qui jurait avec le gris)
+NOIR_HOVER = "#2C2B29"
+var_ajustement_taille = 3  # Ajustement de taille pour les polices (pour compenser le DPI)
+FONT = ("Segoe UI", 10 + var_ajustement_taille)
+FONT_SMALL = ("Segoe UI", 9 + var_ajustement_taille)
+FONT_BOLD = ("Segoe UI", 10 + var_ajustement_taille, "bold")
+FONT_TITLE = ("Segoe UI", 13 + var_ajustement_taille, "bold")
+FONT_LABEL = ("Segoe UI", 9 + var_ajustement_taille)
+FONT_VALUE = ("Segoe UI", 18 + var_ajustement_taille, "bold")
+FONT_MONO = ("Consolas", 9 + var_ajustement_taille)
 
 
 #  widgets
@@ -107,6 +114,33 @@ def btn_noir(parent, text, command, font=FONT, padx=14, pady=7):
         activeforeground="#ffffff",
         relief="flat",
         bd=0,
+        padx=padx,
+        pady=pady,
+        cursor="hand2",
+    )
+
+
+def btn_ghost(parent, text, command, fg=None, border=None, font=FONT, padx=14, pady=6):
+    """Bouton LÉGER (action secondaire) : fond blanc, texte coloré, fine bordure colorée.
+
+    Allège l'écran par rapport à un aplat plein — on réserve le plein à l'action
+    principale (ex. START), et STOP / Final / etc. passent en contour discret.
+    """
+    return tk.Button(
+        parent,
+        text=text,
+        command=command,
+        font=font,
+        bg=C["bg_card"],
+        fg=fg or C["txt_secondary"],
+        activebackground=C["bg_hover"],
+        activeforeground=fg or C["txt_primary"],
+        disabledforeground=C["txt_muted"],
+        relief="flat",
+        bd=0,
+        highlightbackground=border or C["border_light"],
+        highlightcolor=border or C["border_light"],
+        highlightthickness=1,
         padx=padx,
         pady=pady,
         cursor="hand2",
